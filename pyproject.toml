@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "richgram"
+dynamic = ["version", "readme"]
+description = "richgram — Telegram Bot API 10.3 rich messages (tables, buttons, details) for Pyrogram bots"
+requires-python = ">=3.8"
+authors = [
+  { name = "BadmundaXd", email = "munda.bad1322@gmail.com" }
+]
+keywords = ["telegram", "rich message", "bot api", "pyrogram", "inline buttons"]
+classifiers = [
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+]
+dependencies = ["kurigram"]
+
+[project.urls]
+Homepage = "https://github.com/Badmunda05/richgram"
+Source   = "https://github.com/Badmunda05/richgram"
+Telegram = "https://t.me/BadmundaXd"
+
+[tool.setuptools]
+packages = ["richgram"]
+
+[tool.setuptools.dynamic]
+version = { attr = "richgram.__version__" }
+readme  = { file = ["README.md"], content-type = "text/markdown" }
