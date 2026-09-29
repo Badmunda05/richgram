@@ -1,7 +1,7 @@
 # richgram
 
 Telegram Bot API 10.3 rich messages (tables, details, buttons, headings) for
-Pyrogram / Kurigram bots, with an automatic plain-text fallback.
+Pyrogram / pyrofrok /Kurigram bots, with an automatic plain-text fallback.
 
 ## Install
 
