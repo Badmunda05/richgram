@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "richgram"
+dynamic = ["version", "readme"]
+description = "richgram: Telegram Bot API 10.3 rich messages (tables, details, colored buttons) for Pyrogram bots"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "BadmundaXd", email = "munda.bad1322@gmail.com" }
+]
+keywords = ["telegram", "rich message", "bot api", "pyrogram", "kurigram", "inline buttons"]
+classifiers = [
+  "Operating System :: OS Independent",
+  "Programming Language :: Python",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Topic :: Communications :: Chat",
+]
+dependencies = ["kurigram"]
+
+[project.optional-dependencies]
+http = ["httpx"]
+test = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[project.urls]
+Homepage = "https://github.com/Badmunda05/richgram"
+Source   = "https://github.com/Badmunda05/richgram"
+Telegram = "https://t.me/BadmundaXd"
+
+[tool.setuptools]
+packages = ["richgram"]
+
+[tool.setuptools.dynamic]
+version = { attr = "richgram.__version__" }
+readme  = { file = ["README.md"], content-type = "text/markdown" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "unit: fast, no network and no Telegram client",
+  "guard: asserts a property of the repository rather than one module",
+  "integration: talks to the real Telegram API (needs API_ID, API_HASH, BOT_TOKEN, CHAT_ID)",
+]
