@@ -96,6 +96,16 @@ await rich_send(client, chat_id, text + buttons)
 - `style`: `primary` (blue), `success` (green), `danger` (red), `link`, or leave it out for grey.
 - URL button: `type="url"` with `url="..."`.
 - Callback button: `type="callback_data"` with `data="..."`.
+- Copy button: `type="copy_text"` with `text="..."` — one tap copies the
+  value to the clipboard. The text must be 1–256 characters, and a copy
+  button takes no `url` or `callback_data`:
+
+```python
+rich_button("Copy ID", copy_text="5368324170671202286", style="primary")
+```
+
+  When a message falls back to plain text, a copy button becomes its bold
+  label — the value itself is not shown.
 - `rich_button_row(..., align="center")` aligns the row (`left`, `center`, `right`).
 
 Random colours like an inline keyboard:
@@ -106,6 +116,22 @@ import random
 style = random.choice(["primary", "success", "danger"])
 rich_button("Shuffle", callback_data="shuffle", style=style)
 ```
+
+## Page indexation
+
+The bottom line of a paginated message is an italic footer:
+
+```python
+from richgram import rich_page_index
+
+rich_page_index(2, 5, total=42)              # Page 2 of 5 • total 42
+rich_page_index(2, 5)                        # Page 2 of 5
+rich_page_index(2, 5, label="Settings")     # Settings • Page 2 of 5
+```
+
+Page counts are 1-based, `pages` must cover `page`, and `total` must not
+be negative. In plain-text fallback the line survives as `Page 2 of 5 •
+total 42`.
 
 ## Premium (custom) emoji
 
@@ -434,7 +460,8 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 `rich_details_group`, `rich_details_nested`, `rich_block_details`,
 `rich_block_paragraph`, `rich_code`,
 `rich_pre`, `rich_list`, `rich_todo_list`, `rich_todo_list_markdown`,
-`rich_block_todo_list`, `rich_hr`, `rich_footer`, `rich_pull_quote`,
+`rich_block_todo_list`, `rich_hr`, `rich_footer`, `rich_page_index`,
+`rich_pull_quote`,
 `rich_math`, `rich_anchor`, `rich_thinking`, `rich_img`, `rich_emoji`,
 `rich_emoji_markdown`, `rich_text_custom_emoji`, `register_custom_emoji`,
 `register_custom_emojis`, `clear_custom_emojis`, `custom_emoji_names`,

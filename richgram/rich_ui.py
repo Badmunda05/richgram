@@ -66,6 +66,7 @@ __all__ = [
     "rich_block_todo_list",
     "rich_hr",
     "rich_footer",
+    "rich_page_index",
     "rich_pull_quote",
     "rich_math",
     "rich_anchor",
@@ -107,6 +108,8 @@ except Exception:
 
 
 BUTTON_STYLES = ("primary", "success", "danger", "link", "default")
+
+_MAX_COPY_TEXT_CHARS = 256
 
 _RICH_ONLY_TAGS = (
     "h1", "h2", "h3", "h4", "h5", "h6",
@@ -288,6 +291,39 @@ def rich_hr() -> str:
 
 def rich_footer(text: str) -> str:
     return f"<footer>{text}</footer>"
+
+
+def rich_page_index(page: int, pages: int, total: int = None, label: str = None) -> str:
+    """A page indexation line for the bottom of a paginated message.
+
+    Renders as an italic footer, the universal style for page indexation:
+    ``<footer><i>Page 2 of 5 • total 42</i></footer>``, or ``Page 2 of 5``
+    when the total is unknown. ``label`` names the list being paged
+    (``Settings · Page 2 of 5``). Page counts are 1-based; ``pages`` must
+    cover ``page`` and ``total`` must not be negative.
+    """
+    if (
+        isinstance(page, bool)
+        or isinstance(pages, bool)
+        or not isinstance(page, int)
+        or not isinstance(pages, int)
+        or page < 1
+        or pages < page
+    ):
+        raise ValueError("page indexation needs 1-based page/pages counts")
+    if total is not None and (
+        isinstance(total, bool) or not isinstance(total, int) or total < 0
+    ):
+        raise ValueError("page indexation needs a non-negative total")
+    if label is not None and not isinstance(label, str):
+        raise ValueError("page indexation label must be a string")
+    parts = []
+    if label:
+        parts.append(rich_esc(label))
+    parts.append(f"Page {page} of {pages}")
+    if total is not None:
+        parts.append(f"total {total}")
+    return rich_footer(f"<i>{' • '.join(parts)}</i>")
 
 
 def rich_pull_quote(text: str) -> str:
@@ -505,13 +541,34 @@ def expand_emoji_shortcodes(html_text: str) -> str:
     return "".join(parts)
 
 
+def _validate_copy_text(copy_text) -> str:
+    if (
+        not isinstance(copy_text, str)
+        or not copy_text
+        or len(copy_text) > _MAX_COPY_TEXT_CHARS
+        or "\x00" in copy_text
+    ):
+        raise ValueError("a copy button needs text of 1-256 characters")
+    return copy_text
+
+
 def rich_button(
     text: str,
     url: str = None,
     callback_data: str = None,
     style: str = None,
+    copy_text: str = None,
 ) -> str:
     style_attr = f' style="{_attr(style)}"' if style in BUTTON_STYLES else ""
+    if copy_text is not None:
+        if url or callback_data:
+            raise ValueError(
+                "a copy button takes only copy_text, not url or callback_data"
+            )
+        return (
+            f'<tg-button type="copy_text"{style_attr} '
+            f'text="{_attr(_validate_copy_text(copy_text))}">{text}</tg-button>'
+        )
     if callback_data:
         return (
             f'<tg-button type="callback_data"{style_attr} '
