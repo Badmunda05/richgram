@@ -9,11 +9,15 @@ from richgram import (
     rich_button_row,
     rich_details,
     rich_edit,
+    rich_emoji_named,
     rich_heading,
     rich_kv_table,
     rich_note,
     rich_reply,
+    register_custom_emoji,
 )
+
+register_custom_emoji("fire", "5368324170671202286", "🔥")
 
 STYLES = ("primary", "success", "danger")
 
@@ -25,7 +29,7 @@ def random_style() -> str:
 def home_text() -> str:
     return (
         rich_heading("richgram demo", level=3)
-        + rich_note("Buttons change colour every time you tap Shuffle.")
+        + rich_note("Buttons change colour every time you tap Shuffle. " + rich_emoji_named("fire"))
         + rich_kv_table([
             ("Library", "richgram"),
             ("Rich support", "yes" if RICH_AVAILABLE else "no"),

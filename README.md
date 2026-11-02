@@ -99,6 +99,70 @@ style = random.choice(["primary", "success", "danger"])
 rich_button("Shuffle", callback_data="shuffle", style=style)
 ```
 
+## Premium (custom) emoji
+
+```python
+from richgram import rich_emoji, rich_send
+
+await rich_send(client, chat_id, "Nice " + rich_emoji("5368324170671202286", "🔥") + " work!")
+```
+
+`rich_emoji(document_id, alt)` emits the Bot API form
+`<tg-emoji emoji-id="...">🔥</tg-emoji>`. The id is the custom-emoji
+sticker's **document id** — not a file_id, pack name, or `t.me/addemoji`
+link, and it cannot be guessed. Get one from a message that already
+contains the emoji (its `custom_emoji` entity), from a sticker set
+(`Sticker.custom_emoji_id`), or verify one you have with:
+
+```python
+from richgram import fetch_custom_emoji
+
+sticker = await fetch_custom_emoji(client, "5368324170671202286")
+print(sticker.emoji)  # the fallback glyph to use as alt
+```
+
+`alt` is the plain emoji shown where the custom emoji cannot be
+displayed (notifications, forwards by non-premium users, and richgram's
+plain-text fallback), so it is required. A bot may send custom emoji if
+its owner has Telegram Premium (direct messages to private, group and
+supergroup chats) or if the bot purchased additional usernames on
+Fragment (also channels). If the bot is not eligible, Telegram rejects
+the message and richgram falls back to the alt text.
+
+Register emoji once and use them by name, including `:shortcode:`
+expansion in any text:
+
+```python
+from richgram import (
+    add_html_hook, expand_emoji_shortcodes,
+    register_custom_emoji, rich_emoji_named,
+)
+
+register_custom_emoji("fire", "5368324170671202286", "🔥")
+add_html_hook(expand_emoji_shortcodes)
+
+await rich_send(client, chat_id, "Nice :fire: work!")  # :fire: expands on send
+rich_emoji_named("fire")  # the same markup, directly
+```
+
+Only registered names expand; unknown shortcodes and times like `12:30`
+are left alone, and shortcodes inside `<pre>`/`<code>` are never
+expanded. `register_custom_emojis({...})` registers many at once,
+`custom_emoji_names()` lists them, `clear_custom_emojis()` clears them.
+
+MarkdownV2 form, and the typed block form for `rich_send_blocks`:
+
+```python
+from richgram import rich_emoji_markdown, rich_text_custom_emoji
+
+rich_emoji_markdown("5368324170671202286", "🔥")  # ![🔥](tg://emoji?id=...)
+rich_text_custom_emoji("5368324170671202286", "🔥")  # RichTextCustomEmoji
+```
+
+The older Pyrogram form `<emoji id="...">🔥</emoji>` still works anywhere
+in richgram input: it is normalised to `<tg-emoji emoji-id="...">` before
+sending, since the rich path sends HTML raw to Telegram.
+
 ## Content blocks
 
 ```python
@@ -193,14 +257,13 @@ import logging
 logging.getLogger("richgram").setLevel(logging.DEBUG)
 ```
 
-Transform HTML before it is sent (for example custom emoji):
+Transform HTML before it is sent (for example expanding emoji shortcodes):
 
 ```python
-from richgram import add_html_hook
+from richgram import add_html_hook, expand_emoji_shortcodes, register_custom_emoji
 
-@add_html_hook
-def custom_emoji(html):
-    return html.replace(":fire:", '<emoji id="5368324170671202286">🔥</emoji>')
+register_custom_emoji("fire", "5368324170671202286", "🔥")
+add_html_hook(expand_emoji_shortcodes)  # turns :fire: into a premium emoji
 ```
 
 Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
@@ -210,11 +273,14 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 `RICH_AVAILABLE`, `rich_esc`, `sanitize_display_name`, `rich_heading`,
 `rich_note`, `rich_table`, `rich_kv_table`, `rich_details`, `rich_code`,
 `rich_pre`, `rich_list`, `rich_hr`, `rich_footer`, `rich_pull_quote`,
-`rich_math`, `rich_anchor`, `rich_thinking`, `rich_img`, `rich_button`,
-`rich_button_row`, `rich_to_plain`, `rich_caption`, `add_html_hook`,
-`clear_html_hooks`, `rich_send`, `rich_send_blocks`, `rich_reply`,
-`rich_edit`, `rich_edit_inline`, `rich_answer`, `ephemeral_edit`,
-`ephemeral_delete`, `RichDraft`
+`rich_math`, `rich_anchor`, `rich_thinking`, `rich_img`, `rich_emoji`,
+`rich_emoji_markdown`, `rich_text_custom_emoji`, `register_custom_emoji`,
+`register_custom_emojis`, `clear_custom_emojis`, `custom_emoji_names`,
+`rich_emoji_named`, `expand_emoji_shortcodes`, `fetch_custom_emoji`,
+`rich_button`, `rich_button_row`, `rich_to_plain`, `rich_caption`,
+`add_html_hook`, `clear_html_hooks`, `rich_send`, `rich_send_blocks`,
+`rich_reply`, `rich_edit`, `rich_edit_inline`, `rich_answer`,
+`ephemeral_edit`, `ephemeral_delete`, `RichDraft`
 
 ## Demo bot
 

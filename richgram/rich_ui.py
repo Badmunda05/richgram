@@ -18,6 +18,11 @@ try:
 except ImportError:
     EphemeralMessageParameters = None
 
+try:
+    from pyrogram.types import RichTextCustomEmoji
+except ImportError:
+    RichTextCustomEmoji = None
+
 logger = logging.getLogger("richgram")
 
 __all__ = [
@@ -39,6 +44,16 @@ __all__ = [
     "rich_anchor",
     "rich_thinking",
     "rich_img",
+    "rich_emoji",
+    "rich_emoji_markdown",
+    "rich_text_custom_emoji",
+    "register_custom_emoji",
+    "register_custom_emojis",
+    "clear_custom_emojis",
+    "custom_emoji_names",
+    "rich_emoji_named",
+    "expand_emoji_shortcodes",
+    "fetch_custom_emoji",
     "rich_button",
     "rich_button_row",
     "rich_to_plain",
@@ -86,8 +101,11 @@ _ANY_TAG_RE = re.compile(r"<[^>]+>")
 _RICH_TAGS_RE = re.compile(
     r"</?(?:h[1-6]|table|thead|tbody|tr|th|td|details|summary|mark|sub|sup|ul|ol|li|hr|aside|footer"
     r"|tg-button-row|tg-button|tg-math-block|tg-collage|tg-slideshow|tg-map|tg-document|tg-thinking"
-    r"|button|img)(?=[\s/>])",
+    r"|tg-emoji|emoji|button|img)(?=[\s/>])",
     re.I,
+)
+_LEGACY_EMOJI_RE = re.compile(
+    r'<emoji\s+id="([^"]*)"\s*>(.*?)</emoji>', re.I | re.S
 )
 _BUTTON_RE = re.compile(r"<tg-button\b([^>]*)>(.*?)</tg-button>", re.I | re.S)
 _ATTR_RE = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
@@ -201,6 +219,205 @@ def rich_thinking() -> str:
     return "<tg-thinking></tg-thinking>"
 
 
+_MAX_CUSTOM_EMOJI_ID = 2**63 - 1
+
+
+def _validate_custom_emoji_id(document_id) -> str:
+    if isinstance(document_id, bool):
+        raise ValueError("custom emoji id must be digits, not a boolean")
+    if isinstance(document_id, int):
+        value = document_id
+    elif isinstance(document_id, str):
+        text = document_id.strip()
+        if not text.isdigit():
+            raise ValueError(
+                f"invalid custom emoji id {document_id!r}: expected digits only"
+            )
+        value = int(text)
+    else:
+        raise ValueError(
+            f"invalid custom emoji id {document_id!r}: expected an int or a digit string"
+        )
+    if not 1 <= value <= _MAX_CUSTOM_EMOJI_ID:
+        raise ValueError(
+            f"invalid custom emoji id {document_id!r}: out of range 1..{_MAX_CUSTOM_EMOJI_ID}"
+        )
+    return str(value)
+
+
+def _validate_emoji_alt(alt) -> str:
+    if not isinstance(alt, str) or not alt.strip():
+        raise ValueError(
+            "custom emoji needs a non-empty alternative emoji, e.g. rich_emoji(id, '🔥')"
+        )
+    return alt.strip()
+
+
+def rich_emoji(document_id, alt: str) -> str:
+    """A premium custom emoji in Bot API HTML form.
+
+    Example: ``rich_emoji("5368324170671202286", "🔥")`` ->
+    ``<tg-emoji emoji-id="5368324170671202286">🔥</tg-emoji>``.
+
+    ``document_id`` is the custom-emoji sticker's document id (not a
+    file_id, pack name, or t.me/addemoji link). Read one off a message
+    entity of type custom_emoji, a sticker set (``Sticker.custom_emoji_id``),
+    or :func:`fetch_custom_emoji`. A fabricated id fails at send time, so
+    the shape is validated here (digits only, fits in a signed 64-bit int).
+
+    ``alt`` is the plain emoji shown where the custom emoji cannot be
+    displayed (notifications, forwards by non-premium users, and richgram's
+    plain-text fallback). It is required: Telegram requires a valid emoji
+    as the content of the tag.
+
+    Eligibility (Bot API 9.4+): a bot may send custom emoji if its owner
+    has Telegram Premium (direct messages to private/group/supergroup
+    chats) or if the bot purchased additional usernames on Fragment (also
+    channels). richgram cannot check eligibility; an ineligible send is
+    rejected by Telegram and :func:`rich_send` falls back to ``alt``.
+    """
+    emoji_id = _validate_custom_emoji_id(document_id)
+    alt_text = _validate_emoji_alt(alt)
+    return f'<tg-emoji emoji-id="{emoji_id}">{rich_esc(alt_text)}</tg-emoji>'
+
+
+def rich_emoji_markdown(document_id, alt: str) -> str:
+    """The same custom emoji in MarkdownV2 form: ``![alt](tg://emoji?id=...)``."""
+    emoji_id = _validate_custom_emoji_id(document_id)
+    alt_text = _validate_emoji_alt(alt)
+    return f"![{alt_text}](tg://emoji?id={emoji_id})"
+
+
+def rich_text_custom_emoji(document_id, alt: str):
+    """A typed ``RichTextCustomEmoji`` for use in ``rich_send_blocks``.
+
+    Example: ``InputRichBlockParagraph(text=[rich_text_custom_emoji(id, "🔥")])``.
+    Requires a Kurigram build with ``RichTextCustomEmoji``.
+    """
+    if RichTextCustomEmoji is None:
+        raise RuntimeError(
+            "rich_text_custom_emoji needs a Kurigram build with RichTextCustomEmoji"
+        )
+    return RichTextCustomEmoji(
+        custom_emoji_id=_validate_custom_emoji_id(document_id),
+        alternative_text=_validate_emoji_alt(alt),
+    )
+
+
+async def fetch_custom_emoji(client, document_id):
+    """Verify a custom emoji id and get its sticker (or ``None``).
+
+    Calls ``client.get_custom_emoji_stickers([id])`` (at most 200 ids per
+    call; this helper checks one). The returned sticker carries
+    ``.custom_emoji_id`` and ``.emoji`` — the fallback glyph to pass as
+    ``alt`` to :func:`rich_emoji`.
+    """
+    emoji_id = _validate_custom_emoji_id(document_id)
+    getter = getattr(client, "get_custom_emoji_stickers", None)
+    if getter is None:
+        raise RuntimeError(
+            "fetch_custom_emoji needs a client with get_custom_emoji_stickers "
+            "(Kurigram / Pyrogram)"
+        )
+    stickers = await getter([emoji_id])
+    if not stickers:
+        return None
+    return stickers[0]
+
+
+_CUSTOM_EMOJI_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+_SHORTCODE_RE = re.compile(r":([A-Za-z][A-Za-z0-9_-]*):")
+_VERBATIM_SPLIT_RE = re.compile(
+    r"(<(?:pre|code)\b[^>]*>.*?</(?:pre|code)>)", re.I | re.S
+)
+
+_custom_emojis: dict = {}
+
+
+def _validate_custom_emoji_name(name) -> str:
+    if not isinstance(name, str) or not _CUSTOM_EMOJI_NAME_RE.match(name.strip()):
+        raise ValueError(
+            f"invalid custom emoji name {name!r}: use letters, digits, '_' or '-', "
+            "starting with a letter (e.g. 'fire')"
+        )
+    return name.strip().lower()
+
+
+def register_custom_emoji(name, document_id, alt: str) -> str:
+    """Register one custom emoji by name; returns its markup."""
+    key = _validate_custom_emoji_name(name)
+    emoji_id = _validate_custom_emoji_id(document_id)
+    alt_text = _validate_emoji_alt(alt)
+    _custom_emojis[key] = (emoji_id, alt_text)
+    return rich_emoji(emoji_id, alt_text)
+
+
+def register_custom_emojis(mapping) -> None:
+    """Register many custom emojis at once.
+
+    ``mapping`` is ``{name: (document_id, alt)}`` or
+    ``{name: {"id": document_id, "alt": alt}}``.
+    """
+    for name, value in dict(mapping).items():
+        if isinstance(value, dict):
+            document_id, alt = value.get("id"), value.get("alt")
+        else:
+            document_id, alt = value
+        register_custom_emoji(name, document_id, alt)
+
+
+def clear_custom_emojis() -> None:
+    _custom_emojis.clear()
+
+
+def custom_emoji_names() -> list:
+    return sorted(_custom_emojis)
+
+
+def rich_emoji_named(name) -> str:
+    """Markup for a registered custom emoji, by name."""
+    key = _validate_custom_emoji_name(name)
+    try:
+        emoji_id, alt = _custom_emojis[key]
+    except KeyError:
+        known = ", ".join(custom_emoji_names()) or "(none registered)"
+        raise KeyError(
+            f"unknown custom emoji {name!r}; registered names: {known}"
+        ) from None
+    return rich_emoji(emoji_id, alt)
+
+
+def expand_emoji_shortcodes(html_text: str) -> str:
+    """Replace registered ``:name:`` shortcodes with custom-emoji markup.
+
+    Register names first, e.g. ``register_custom_emoji("fire", id, "🔥")``,
+    then use as an html hook so ``rich_send`` expands them on the way out::
+
+        add_html_hook(expand_emoji_shortcodes)
+
+    Only registered names expand; unknown shortcodes (and times like
+    12:30) are left untouched. Shortcodes inside ``<pre>``/``<code>`` are
+    never expanded, so code samples stay verbatim.
+    """
+    if not html_text or not _custom_emojis:
+        return html_text or ""
+
+    def _expand(segment: str) -> str:
+        def _replace(match):
+            key = match.group(1).lower()
+            entry = _custom_emojis.get(key)
+            if entry is None:
+                return match.group(0)
+            return rich_emoji(entry[0], entry[1])
+
+        return _SHORTCODE_RE.sub(_replace, segment)
+
+    parts = _VERBATIM_SPLIT_RE.split(str(html_text))
+    for i in range(0, len(parts), 2):
+        parts[i] = _expand(parts[i])
+    return "".join(parts)
+
+
 def rich_button(
     text: str,
     url: str = None,
@@ -296,6 +513,7 @@ def _normalize_html(html_text: str) -> str:
             logger.debug(f"[_normalize_html] html hook skipped: {e}")
     text = re.sub(r"href='([^']*)'", r'href="\1"', text)
     text = re.sub(r'href=(?!["\'])([^\s">]+)', r'href="\1"', text)
+    text = _LEGACY_EMOJI_RE.sub(r'<tg-emoji emoji-id="\1">\2</tg-emoji>', text)
     parts = _VERBATIM_BLOCK_RE.split(text)
     for i in range(0, len(parts), 2):
         if not parts[i]:
