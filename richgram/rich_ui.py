@@ -23,6 +23,16 @@ try:
 except ImportError:
     RichTextCustomEmoji = None
 
+try:
+    from pyrogram.types import InputRichBlockDetails
+except ImportError:
+    InputRichBlockDetails = None
+
+try:
+    from pyrogram.types import InputRichBlockParagraph
+except ImportError:
+    InputRichBlockParagraph = None
+
 logger = logging.getLogger("richgram")
 
 __all__ = [
@@ -34,6 +44,10 @@ __all__ = [
     "rich_table",
     "rich_kv_table",
     "rich_details",
+    "rich_details_group",
+    "rich_details_nested",
+    "rich_block_details",
+    "rich_block_paragraph",
     "rich_code",
     "rich_pre",
     "rich_list",
@@ -463,9 +477,188 @@ def rich_kv_table(pairs, headers=None, border: int = 1) -> str:
     return rich_table(headers, rows, border=border)
 
 
+_MAX_DETAILS_DEPTH = 16
+_DETAILS_TAG_RE = re.compile(r"<details\b[^>]*>|</details>", re.I)
+
+
+def _max_details_depth(html_text: str) -> int:
+    depth = 0
+    deepest = 0
+    for match in _DETAILS_TAG_RE.finditer(str(html_text or "")):
+        if match.group(0).startswith("</"):
+            depth = max(0, depth - 1)
+        else:
+            depth += 1
+            deepest = max(deepest, depth)
+    return deepest
+
+
+def _validate_details_summary(summary) -> str:
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("a details section needs a non-empty summary string")
+    return summary
+
+
 def rich_details(summary: str, body: str, open: bool = False) -> str:
+    """One collapsible section.
+
+    Nesting is allowed: pass another ``rich_details(...)`` (or any HTML
+    containing ``<details>``) as ``body``. Telegram allows up to 16 levels
+    of nested formatting and blocks, so deeper nesting raises ValueError
+    here instead of failing at send time.
+    """
+    if _max_details_depth(body) >= _MAX_DETAILS_DEPTH:
+        raise ValueError(
+            "nested details exceed Telegram's 16-level limit for rich messages"
+        )
     attr = " open" if open else ""
     return f"<details{attr}><summary>{summary}</summary>{body}</details>"
+
+
+def _details_section(section):
+    """Normalise one group/nested section to (summary, body, open, children)."""
+    children = ()
+    if isinstance(section, dict):
+        summary = section.get("summary")
+        body = section.get("body", "")
+        is_open = section.get("open", False)
+        children = section.get("children", ())
+    elif isinstance(section, (list, tuple)):
+        if len(section) not in (2, 3):
+            raise ValueError(
+                "a details section is (summary, body) or (summary, body, open)"
+            )
+        summary, body = section[0], section[1]
+        is_open = section[2] if len(section) == 3 else False
+    else:
+        raise ValueError(
+            "a details section is a (summary, body) tuple or a dict with "
+            "'summary' and 'body'"
+        )
+    summary = _validate_details_summary(summary)
+    if body is None:
+        body = ""
+    if not isinstance(body, str):
+        raise ValueError("a details body must be a string")
+    if children is None:
+        children = ()
+    if not isinstance(children, (list, tuple)):
+        raise ValueError("a details 'children' value must be a list of sections")
+    return summary, body, bool(is_open), children
+
+
+def rich_details_group(sections, *, open_first: bool = False, open_all: bool = False) -> str:
+    """Several sibling collapsible sections in one message.
+
+    ``sections`` is an iterable of ``(summary, body)``, ``(summary, body, open)``
+    or ``{"summary": ..., "body": ..., "open": ...}``. A per-section ``open``
+    wins over ``open_first``/``open_all``; ``open_first`` opens only the
+    first section, ``open_all`` opens every section. Sections open and close
+    independently: Telegram has no accordion mode. Returns "" for no sections.
+    """
+    if open_first and open_all:
+        raise ValueError("open_first and open_all cannot both be True")
+    parts = []
+    for index, section in enumerate(sections or ()):
+        summary, body, is_open, _children = _details_section(section)
+        if not is_open:
+            is_open = open_all or (open_first and index == 0)
+        parts.append(rich_details(summary, body, open=is_open))
+    return "\n".join(parts)
+
+
+def _details_tree(node, depth: int) -> str:
+    """Build one (possibly nested) details section from a node."""
+    if isinstance(node, str):
+        if _max_details_depth(node) + depth - 1 > _MAX_DETAILS_DEPTH:
+            raise ValueError(
+                "nested details exceed Telegram's 16-level limit for rich messages"
+            )
+        return node
+    summary, body, is_open, children = _details_section(node)
+    if depth > _MAX_DETAILS_DEPTH:
+        raise ValueError(
+            "nested details exceed Telegram's 16-level limit for rich messages"
+        )
+    inner = body + "".join(
+        _details_tree(child, depth + 1) for child in (children or ())
+    )
+    return rich_details(summary, inner, open=is_open)
+
+
+def rich_details_nested(summary: str, body: str = "", children=(), open: bool = False) -> str:
+    """One collapsible section containing nested collapsible sections.
+
+    ``children`` are sections in the same shapes ``rich_details_group``
+    accepts, plus dicts with a ``children`` key for deeper nesting and
+    prebuilt ``rich_details(...)`` strings. Example::
+
+        rich_details_nested("Guide", "Start here.", children=[
+            ("Install", "pip install richgram"),
+            {"summary": "Advanced", "body": "", "children": [
+                ("Source", "Clone the repo and read rich_ui.py"),
+            ]},
+        ])
+
+    Nesting deeper than Telegram's 16 levels raises ValueError.
+    """
+    return _details_tree(
+        {"summary": summary, "body": body, "open": open, "children": children},
+        depth=1,
+    )
+
+
+def rich_block_paragraph(text: str):
+    """A typed ``InputRichBlockParagraph`` for use in ``rich_send_blocks``."""
+    if InputRichBlockParagraph is None:
+        raise RuntimeError(
+            "rich_block_paragraph needs a Kurigram build with InputRichBlockParagraph"
+        )
+    return InputRichBlockParagraph(text=text)
+
+
+def rich_block_details(summary: str, blocks, open: bool = False):
+    """A typed ``InputRichBlockDetails`` for use in ``rich_send_blocks``.
+
+    ``blocks`` is a list of ``InputRichBlock`` objects; nest another
+    ``rich_block_details(...)`` inside it for nested collapsibles.
+    """
+    if InputRichBlockDetails is None:
+        raise RuntimeError(
+            "rich_block_details needs a Kurigram build with InputRichBlockDetails"
+        )
+    return InputRichBlockDetails(
+        summary=_validate_details_summary(summary),
+        blocks=list(blocks or ()),
+        is_open=True if open else None,
+    )
+
+
+_DETAILS_OUTLINE_RE = re.compile(
+    r"<details\b[^>]*>|</details>|<summary>(.*?)</summary>", re.I | re.S
+)
+
+
+def _details_to_outline(html_text: str, bold: bool) -> str:
+    depth = 0
+
+    def _replace(match):
+        nonlocal depth
+        token = match.group(0)
+        lowered = token.lower()
+        if lowered.startswith("</details"):
+            depth = max(0, depth - 1)
+            return "\n"
+        if lowered.startswith("<details"):
+            depth += 1
+            return ""
+        summary = match.group(1) or ""
+        indent = "  " * max(0, depth - 1)
+        if bold:
+            return f"{indent}▸ <b>{summary}</b>\n"
+        return f"{indent}▸ {summary}\n"
+
+    return _DETAILS_OUTLINE_RE.sub(_replace, html_text)
 
 
 def rich_to_plain(html_text: str) -> str:
@@ -473,6 +666,7 @@ def rich_to_plain(html_text: str) -> str:
         return ""
     text = str(html_text)
     text = _EMOJI_TAG_RE.sub(r"\1", text)
+    text = _details_to_outline(text, bold=False)
     text = re.sub(r"<li\b[^>]*>", "\u2022 ", text, flags=re.I)
     text = re.sub(r"<hr\s*/?>", "\n", text, flags=re.I)
     text = _CELL_BREAK_RE.sub("\x1f", text)
@@ -547,7 +741,7 @@ def _plain_fallback(html_text: str) -> str:
     text = re.sub(r"<p\b[^>]*>", "", text, flags=re.I)
     text = re.sub(r"</p>", "\n\n", text, flags=re.I)
     text = re.sub(r"<h[1-6]>(.*?)</h[1-6]>", r"\n<b>\1</b>\n", text, flags=re.I | re.S)
-    text = re.sub(r"<summary>(.*?)</summary>", r"<b>\1</b>\n", text, flags=re.I | re.S)
+    text = _details_to_outline(text, bold=True)
     text = re.sub(r"<mark>(.*?)</mark>", r"<b>\1</b>", text, flags=re.I | re.S)
     text = re.sub(r"<tg-math-block>(.*?)</tg-math-block>", r"<code>\1</code>", text, flags=re.I | re.S)
     text = _BUTTON_RE.sub(_button_to_plain, text)

@@ -7,7 +7,7 @@ from richgram import (
     RICH_AVAILABLE,
     rich_button,
     rich_button_row,
-    rich_details,
+    rich_details_group,
     rich_edit,
     rich_emoji_named,
     rich_heading,
@@ -34,7 +34,10 @@ def home_text() -> str:
             ("Library", "richgram"),
             ("Rich support", "yes" if RICH_AVAILABLE else "no"),
         ])
-        + rich_details("What is this?", "A test bot for the richgram package.")
+        + rich_details_group([
+            ("What is this?", "A test bot for the richgram package."),
+            ("Multiple collapsibles", "Two sections, one message — each opens on its own."),
+        ], open_first=True)
     )
 
 

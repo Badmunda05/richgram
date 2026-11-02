@@ -163,6 +163,59 @@ The older Pyrogram form `<emoji id="...">🔥</emoji>` still works anywhere
 in richgram input: it is normalised to `<tg-emoji emoji-id="...">` before
 sending, since the rich path sends HTML raw to Telegram.
 
+## Multiple collapsibles
+
+One section is `rich_details(summary, body, open=False)`. For several
+sections in one message, build them as a group:
+
+```python
+from richgram import rich_details_group
+
+text = rich_details_group([
+    ("Install", "pip install richgram"),
+    ("Usage", "See the examples below.", True),  # open by default
+    {"summary": "Source", "body": "Clone the repo and read rich_ui.py"},
+])
+```
+
+`open_first=True` opens only the first section, `open_all=True` opens
+every section, and a per-section `open` wins over both. Sections open and
+close independently: Telegram has no accordion mode.
+
+Sections nest, too — pass a `rich_details(...)` as a body, or build a
+tree with `rich_details_nested`:
+
+```python
+from richgram import rich_details_nested
+
+text = rich_details_nested("Guide", "Start here.", children=[
+    ("Install", "pip install richgram"),
+    {"summary": "Advanced", "body": "", "children": [
+        ("Source", "Clone the repo and read rich_ui.py"),
+    ]},
+])
+```
+
+Telegram allows up to 16 levels of nested formatting and blocks (and up
+to 500 blocks in a message, nested details included), so nesting deeper
+than 16 raises `ValueError` instead of failing at send time.
+
+Typed blocks for `rich_send_blocks` (nest one details block inside
+another the same way):
+
+```python
+from richgram import rich_block_details, rich_block_paragraph
+
+block = rich_block_details("Guide", [
+    rich_block_paragraph("Start here."),
+    rich_block_details("Advanced", [rich_block_paragraph("Deep dive.")]),
+], open=True)
+```
+
+When a rich message is rejected and richgram falls back to plain text,
+collapsibles become an indented outline (`▸` per section, deeper sections
+indented), so the structure survives instead of collapsing flat.
+
 ## Content blocks
 
 ```python
@@ -271,7 +324,9 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 ## Everything you can import
 
 `RICH_AVAILABLE`, `rich_esc`, `sanitize_display_name`, `rich_heading`,
-`rich_note`, `rich_table`, `rich_kv_table`, `rich_details`, `rich_code`,
+`rich_note`, `rich_table`, `rich_kv_table`, `rich_details`,
+`rich_details_group`, `rich_details_nested`, `rich_block_details`,
+`rich_block_paragraph`, `rich_code`,
 `rich_pre`, `rich_list`, `rich_hr`, `rich_footer`, `rich_pull_quote`,
 `rich_math`, `rich_anchor`, `rich_thinking`, `rich_img`, `rich_emoji`,
 `rich_emoji_markdown`, `rich_text_custom_emoji`, `register_custom_emoji`,
