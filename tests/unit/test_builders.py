@@ -92,6 +92,19 @@ def test_table_without_headers():
     assert "<th>" not in rich_table(None, [["x"]])
 
 
+def test_table_tolerates_hostile_rows():
+    assert rich_table(["A"], [None]) == (
+        '<table border="1"><tr><th>A</th></tr><tr></tr></table>'
+    )
+    assert rich_table(None, ["only"]) == (
+        '<table border="1"><tr><td>only</td></tr></table>'
+    )
+    assert rich_table(None, [None, "x", ["y", None]]) == (
+        '<table border="1"><tr></tr><tr><td>x</td></tr>'
+        "<tr><td>y</td><td></td></tr></table>"
+    )
+
+
 def test_kv_table_skips_none_values_and_bolds_keys():
     html = rich_kv_table([("Title", "Song"), ("Skipped", None)])
     assert "<td><b>Title</b></td><td>Song</td>" in html

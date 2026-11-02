@@ -304,6 +304,7 @@ from richgram import (
 rich_list(["one", "two"])
 rich_list(["first", "second"], ordered=True)
 rich_pre("print('hi')", language="python")
+rich_table(["A"], [None, "single"])  # None rows render empty, string rows single-cell
 rich_math("x^2 + y^2 = z^2")
 rich_details("More", "hidden text", open=True)
 ```
@@ -428,7 +429,11 @@ peer and generates `random_id` itself when the request is invoked.
 Like `rich_send`, a rich request Telegram rejects falls back to an
 ordinary Telethon `send_message` with the plain fallback text — and
 Telethon's HTML parser understands `<tg-emoji>`, so premium emoji survive
-the plain path too. The builders for replies and blocks mirror the
+the plain path too. A raw send returns `Updates`, so the adapter resolves
+the real `Message` from it before returning — `msg.id` works on the
+return value of every send/edit call. A `FloodWaitError` is re-raised
+from both paths, never swallowed into `None` and never fallen back from,
+so the caller can sleep and retry. The builders for replies and blocks mirror the
 Pyrogram side:
 
 ```python

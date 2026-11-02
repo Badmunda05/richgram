@@ -23,6 +23,7 @@ mirroring ``rich_send``. Telethon's own HTML parser understands
 """
 from __future__ import annotations
 
+import inspect
 import logging
 
 from .rich_ui import (
@@ -53,7 +54,14 @@ __all__ = [
 
 
 def _load_telethon():
-    """Return Telethon's (types, functions), or raise RuntimeError."""
+    """Return Telethon's (types, functions), or raise RuntimeError.
+
+    Existence is not enough: a stale or mismatched Telethon build can
+    carry ``SendMessageRequest`` without a ``rich_message`` parameter, and
+    every rich send then dies with ``TypeError: unexpected keyword
+    argument 'rich_message'``. The signatures are checked, not just the
+    names.
+    """
     try:
         from telethon import functions, types
     except ImportError as exc:
@@ -68,6 +76,24 @@ def _load_telethon():
             "(InputRichMessageHTML, SendMessageRequest with rich_message); "
             "telethon>=1.45 is known to work"
         )
+    for name in ("SendMessageRequest", "EditMessageRequest"):
+        request_cls = getattr(functions.messages, name, None)
+        if request_cls is None:
+            raise RuntimeError(
+                f"Telethon support needs {name}; telethon>=1.45 is known to work"
+            )
+        try:
+            params = inspect.signature(request_cls.__init__).parameters
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Telethon support needs an inspectable {name} signature"
+            ) from exc
+        if "rich_message" not in params:
+            raise RuntimeError(
+                f"Telethon support needs {name} to accept rich_message — "
+                "this Telethon build does not (stale wheel?); "
+                "telethon>=1.45 is known to work"
+            )
     return types, functions
 
 
@@ -80,6 +106,48 @@ except RuntimeError:
 
 def _require_telethon():
     return _load_telethon()
+
+
+def _is_flood_wait(error) -> bool:
+    """True when the error is a Telethon rate-limit error.
+
+    Rate limits must never be swallowed by the generic handlers below:
+    a ``FloodWaitError`` turned into a silent ``None`` hides the limit,
+    and falling back to a plain send after one doubles the flood
+    pressure. Callers re-raise it instead.
+    """
+    try:
+        from telethon.errors import FloodWaitError
+    except ImportError:
+        return False
+    return isinstance(error, FloodWaitError)
+
+
+async def _resolve_message(client, peer, result):
+    """Return the real Message for a raw send/edit result, or None.
+
+    A raw ``client(request)`` returns ``Updates``, where the message id
+    hides inside an ``UpdateMessageID`` / ``UpdateEditMessage`` update —
+    callers reading ``.id`` off the result itself get nothing. Prefer the
+    message carried by an update; otherwise fetch it by id.
+    """
+    updates = getattr(result, "updates", None) or []
+    for update in updates:
+        message = getattr(update, "message", None)
+        if message is not None:
+            return message
+    for update in updates:
+        update_id = getattr(update, "id", None)
+        if update_id is None:
+            continue
+        try:
+            fetched = await client.get_messages(peer, ids=update_id)
+        except Exception as e:
+            logger.debug(f"[_resolve_message] fetch by id failed: {e}")
+            continue
+        if fetched is not None:
+            return fetched
+    return None
 
 
 def telethon_input_rich(html_text: str, *, markdown: bool = False,
@@ -250,9 +318,11 @@ async def telethon_rich_send_blocks(client, chat, blocks, *,
                                    no_webpage=None):
     """Send Telethon ``PageBlock`` objects as one rich message.
 
-    Returns the invoked result, or ``None`` when there are no blocks or the
-    rich request fails. Blocks have no plain-text equivalent, so unlike
-    ``telethon_rich_send`` there is no plain fallback here.
+    Returns the sent Message, or ``None`` when there are no blocks, the
+    rich request fails, or the message cannot be resolved from the
+    result. Blocks have no plain-text equivalent, so unlike
+    ``telethon_rich_send`` there is no plain fallback here. A
+    ``FloodWaitError`` is re-raised, never swallowed.
     """
     if not blocks:
         return None
@@ -267,8 +337,11 @@ async def telethon_rich_send_blocks(client, chat, blocks, *,
             reply_markup=reply_markup,
             rich_message=types.InputRichMessage(blocks=list(blocks)),
         )
-        return await client(request)
+        result = await client(request)
+        return await _resolve_message(client, chat, result)
     except Exception as e:
+        if _is_flood_wait(e):
+            raise
         logger.warning(f"[telethon_rich_send_blocks] block send failed: {e}")
         return None
 
@@ -284,6 +357,9 @@ async def telethon_rich_send(client, chat, html_text: str, *,
     ``rich_message`` set. Plain text (no rich-only tags, no markdown) and
     any rich request Telegram rejects go out as an ordinary Telethon
     ``send_message`` with ``parse_mode="html"`` and the plain fallback text.
+    Both paths return the sent Message (resolved from the raw Updates
+    result on the rich path). A ``FloodWaitError`` is re-raised from
+    either path, never swallowed and never fallen back from.
     """
     if not html_text:
         return None
@@ -301,8 +377,11 @@ async def telethon_rich_send(client, chat, html_text: str, *,
                 reply_markup=reply_markup, silent=silent, no_webpage=no_webpage,
                 is_rtl=is_rtl, skip_entity_detection=skip_entity_detection,
             )
-            return await client(request)
+            result = await client(request)
+            return await _resolve_message(client, chat, result)
         except Exception as e:
+            if _is_flood_wait(e):
+                raise
             logger.debug(f"[telethon_rich_send] rich delivery failed, falling back: {e}")
 
     try:
@@ -316,6 +395,8 @@ async def telethon_rich_send(client, chat, html_text: str, *,
             link_preview=False if no_webpage else None,
         )
     except Exception as e:
+        if _is_flood_wait(e):
+            raise
         logger.debug(f"[telethon_rich_send] plain send failed: {e}")
         return None
 
@@ -385,8 +466,11 @@ async def telethon_rich_edit(target, html_text: str, *, client=None,
                 reply_markup=reply_markup, no_webpage=no_webpage,
                 is_rtl=is_rtl, skip_entity_detection=skip_entity_detection,
             )
-            return await app(request)
+            result = await app(request)
+            return await _resolve_message(app, chat, result)
         except Exception as e:
+            if _is_flood_wait(e):
+                raise
             logger.debug(f"[telethon_rich_edit] rich edit failed, falling back: {e}")
 
     try:
@@ -398,5 +482,7 @@ async def telethon_rich_edit(target, html_text: str, *, client=None,
             reply_markup=reply_markup,
         )
     except Exception as e:
+        if _is_flood_wait(e):
+            raise
         logger.debug(f"[telethon_rich_edit] plain edit failed: {e}")
         return None

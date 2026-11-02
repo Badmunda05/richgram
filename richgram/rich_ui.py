@@ -760,6 +760,10 @@ def rich_table(headers, rows, border: int = 1) -> str:
         cells = "".join(f"<th>{'' if h is None else h}</th>" for h in headers)
         parts.append(f"<tr>{cells}</tr>")
     for row in rows or ():
+        if row is None:
+            row = ()
+        elif isinstance(row, str):
+            row = (row,)
         cells = "".join(f"<td>{'' if c is None else c}</td>" for c in row)
         parts.append(f"<tr>{cells}</tr>")
     parts.append("</table>")

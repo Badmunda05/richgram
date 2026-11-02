@@ -2,11 +2,13 @@ from types import SimpleNamespace
 
 import pytest
 from telethon import types as telethon_types
+from telethon.errors import FloodWaitError
 
 from richgram import rich_details, rich_emoji, rich_heading
 from richgram import telethon as telethon_adapter
 from richgram.telethon import (
     TELETHON_RICH_AVAILABLE,
+    _resolve_message,
     telethon_block_details,
     telethon_block_paragraph,
     telethon_edit_request,
@@ -23,20 +25,26 @@ EMOJI_ID = "5368324170671202286"
 
 
 class FakeTelethonClient:
-    def __init__(self, fail=()):
+    def __init__(self, fail=(), fail_error=None):
         self.calls = []
         self.fail = set(fail)
+        self.fail_error = fail_error
 
     async def __call__(self, request):
         self.calls.append(("invoke", request))
         if "invoke" in self.fail:
-            raise RuntimeError("invoke failed")
-        return SimpleNamespace(id=len(self.calls), call="invoke")
+            raise self.fail_error or RuntimeError("invoke failed")
+        message = SimpleNamespace(id=4242)
+        return SimpleNamespace(updates=[SimpleNamespace(message=message)])
+
+    async def get_messages(self, entity, ids=None):
+        self.calls.append(("get_messages", {"entity": entity, "ids": ids}))
+        return SimpleNamespace(id=ids)
 
     async def send_message(self, entity, text, **kwargs):
         self.calls.append(("send_message", {"entity": entity, "text": text, **kwargs}))
         if "send_message" in self.fail:
-            raise RuntimeError("send_message failed")
+            raise self.fail_error or RuntimeError("send_message failed")
         return SimpleNamespace(id=len(self.calls), call="send_message")
 
     async def edit_message(self, entity, message, text, **kwargs):
@@ -44,7 +52,7 @@ class FakeTelethonClient:
             "entity": entity, "message": message, "text": text, **kwargs,
         }))
         if "edit_message" in self.fail:
-            raise RuntimeError("edit_message failed")
+            raise self.fail_error or RuntimeError("edit_message failed")
         return SimpleNamespace(id=len(self.calls), call="edit_message")
 
     def names(self):
@@ -127,7 +135,7 @@ async def test_rich_send_invokes_raw_request():
     request = client.last("invoke")
     assert request.peer == 123
     assert "<h3>Hi</h3>" in request.rich_message.html
-    assert result.call == "invoke"
+    assert result.id == 4242
 
 
 async def test_rich_send_plain_html_uses_send_message():
@@ -224,7 +232,7 @@ async def test_rich_send_blocks_invokes_with_page_blocks():
     assert client.names() == ["invoke"]
     request = client.last("invoke")
     assert request.rich_message.blocks == blocks
-    assert result.call == "invoke"
+    assert result.id == 4242
 
 
 async def test_rich_send_blocks_empty_and_failed():
@@ -235,3 +243,78 @@ async def test_rich_send_blocks_empty_and_failed():
     assert await telethon_rich_send_blocks(
         failing, 123, [telethon_block_paragraph("hi")]
     ) is None
+
+
+def test_load_telethon_accepts_installed_build():
+    types, functions = telethon_adapter._load_telethon()
+    assert types.InputRichMessageHTML is not None
+    assert functions.messages.SendMessageRequest is not None
+
+
+def test_load_telethon_rejects_request_without_rich_message(monkeypatch):
+    from telethon import functions as tl_functions
+
+    class StubRequest:
+        def __init__(self, peer, message):
+            pass
+
+    monkeypatch.setattr(tl_functions.messages, "SendMessageRequest", StubRequest)
+    with pytest.raises(RuntimeError, match="rich_message"):
+        telethon_adapter._load_telethon()
+
+
+async def test_resolve_message_prefers_update_message():
+    client = FakeTelethonClient()
+    result = SimpleNamespace(updates=[SimpleNamespace(message=SimpleNamespace(id=7))])
+    assert (await _resolve_message(client, 123, result)).id == 7
+    assert client.calls == []
+
+
+async def test_resolve_message_fetches_by_update_id():
+    client = FakeTelethonClient()
+    result = SimpleNamespace(updates=[SimpleNamespace(id=55)])
+    assert (await _resolve_message(client, 123, result)).id == 55
+    assert client.names() == ["get_messages"]
+
+
+async def test_resolve_message_returns_none_when_unresolvable():
+    client = FakeTelethonClient()
+    assert await _resolve_message(client, 123, SimpleNamespace(updates=[])) is None
+    assert await _resolve_message(client, 123, SimpleNamespace()) is None
+
+
+async def test_rich_send_reraises_flood_wait_without_fallback():
+    client = FakeTelethonClient(
+        fail={"invoke"}, fail_error=FloodWaitError(None, 5)
+    )
+    with pytest.raises(FloodWaitError):
+        await telethon_rich_send(client, 123, RICH)
+    assert client.names() == ["invoke"]
+
+
+async def test_rich_send_blocks_reraises_flood_wait():
+    client = FakeTelethonClient(
+        fail={"invoke"}, fail_error=FloodWaitError(None, 5)
+    )
+    with pytest.raises(FloodWaitError):
+        await telethon_rich_send_blocks(
+            client, 123, [telethon_block_paragraph("hi")]
+        )
+
+
+async def test_plain_send_reraises_flood_wait():
+    client = FakeTelethonClient(
+        fail={"send_message"}, fail_error=FloodWaitError(None, 5)
+    )
+    with pytest.raises(FloodWaitError):
+        await telethon_rich_send(client, 123, "<b>hello</b>")
+
+
+async def test_rich_edit_reraises_flood_wait():
+    client = FakeTelethonClient(
+        fail={"invoke"}, fail_error=FloodWaitError(None, 5)
+    )
+    message = FakeTelethonMessage(client)
+    with pytest.raises(FloodWaitError):
+        await telethon_rich_edit(message, RICH)
+    assert client.names() == ["invoke"]
