@@ -308,6 +308,46 @@ rich_math("x^2 + y^2 = z^2")
 rich_details("More", "hidden text", open=True)
 ```
 
+## Code, inside and out
+
+`rich_pre` escapes everything, so a code block is always literal text.
+To nest inline formatting inside a code block — bold a keyword, mark a
+value as inline code — use `rich_pre_rich`, whose body is HTML used
+as-is (escape user text with `rich_esc` first):
+
+```python
+from richgram import rich_pre_rich
+
+rich_pre_rich("<b>pip</b> install <code>richgram</code>", language="bash")
+```
+
+The language travels in the `<code class="language-...">` wrapper — the
+form Telegram's parser reads. Any language string passes through; the
+client highlights the languages it knows. A fenced Markdown block is
+literal, so this nesting exists only in the HTML and typed-block forms.
+
+As typed blocks, for `rich_send_blocks` (Kurigram) and
+`telethon_rich_send_blocks` (Telethon), with the same segment model —
+plain strings or `(kind, text)` pairs with kind `plain`/`bold`/`italic`/
+`code`, or `RichText` objects from `rich_text_bold` / `rich_text_italic` /
+`rich_text_code`:
+
+```python
+from richgram import rich_block_preformatted
+from richgram.telethon import telethon_block_preformatted
+
+rich_block_preformatted([
+    ("bold", "pip"), " install ", ("code", "richgram"),
+], language="bash")
+telethon_block_preformatted([
+    ("bold", "pip"), " install ", ("code", "richgram"),
+], language="bash")
+```
+
+A pre-only message goes out over plain HTML (classic HTML already
+renders `<pre>`), and joins the rich path when combined with rich-only
+content such as a heading or a table.
+
 ## Map, collage, slideshow, audio, video
 
 These blocks are sent as typed Kurigram blocks with `rich_send_blocks`:
@@ -459,7 +499,8 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 `rich_note`, `rich_table`, `rich_kv_table`, `rich_details`,
 `rich_details_group`, `rich_details_nested`, `rich_block_details`,
 `rich_block_paragraph`, `rich_code`,
-`rich_pre`, `rich_list`, `rich_todo_list`, `rich_todo_list_markdown`,
+`rich_pre`, `rich_pre_rich`, `rich_block_preformatted`, `rich_text_bold`,
+`rich_text_italic`, `rich_text_code`, `rich_list`, `rich_todo_list`, `rich_todo_list_markdown`,
 `rich_block_todo_list`, `rich_hr`, `rich_footer`, `rich_page_index`,
 `rich_pull_quote`,
 `rich_math`, `rich_anchor`, `rich_thinking`, `rich_img`, `rich_emoji`,
@@ -474,7 +515,7 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 Telethon transport (`from richgram.telethon import ...`):
 `TELETHON_RICH_AVAILABLE`, `telethon_input_rich`, `telethon_send_request`,
 `telethon_edit_request`, `telethon_block_paragraph`, `telethon_block_details`,
-`telethon_block_todo_list`, `telethon_rich_send`, `telethon_rich_send_blocks`, `telethon_rich_reply`,
+`telethon_block_todo_list`, `telethon_block_preformatted`, `telethon_rich_send`, `telethon_rich_send_blocks`, `telethon_rich_reply`,
 `telethon_rich_edit`
 
 ## Demo bot

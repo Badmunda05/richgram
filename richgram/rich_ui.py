@@ -43,6 +43,26 @@ try:
 except ImportError:
     InputRichBlockListItem = None
 
+try:
+    from pyrogram.types import InputRichBlockPreformatted
+except ImportError:
+    InputRichBlockPreformatted = None
+
+try:
+    from pyrogram.types import RichTextBold
+except ImportError:
+    RichTextBold = None
+
+try:
+    from pyrogram.types import RichTextItalic
+except ImportError:
+    RichTextItalic = None
+
+try:
+    from pyrogram.types import RichTextCode
+except ImportError:
+    RichTextCode = None
+
 logger = logging.getLogger("richgram")
 
 __all__ = [
@@ -60,6 +80,11 @@ __all__ = [
     "rich_block_paragraph",
     "rich_code",
     "rich_pre",
+    "rich_pre_rich",
+    "rich_block_preformatted",
+    "rich_text_bold",
+    "rich_text_italic",
+    "rich_text_code",
     "rich_list",
     "rich_todo_list",
     "rich_todo_list_markdown",
@@ -217,6 +242,149 @@ def rich_pre(value, language: str = None) -> str:
     if language:
         return f'<pre><code class="language-{_attr(language)}">{body}</code></pre>'
     return f"<pre>{body}</pre>"
+
+
+def rich_pre_rich(body: str, language: str = None) -> str:
+    """A preformatted block with nested inline formatting inside it.
+
+    Unlike ``rich_pre``, which escapes everything, ``body`` is used as-is,
+    so inline markup nests inside the code block — bold a keyword, mark a
+    value as inline code::
+
+        rich_pre_rich("<b>pip</b> install <code>richgram</code>", language="bash")
+
+    Escape user-supplied text with ``rich_esc(...)`` before composing the
+    body; data is never markup. The language travels in the
+    ``<code class="language-...">`` wrapper, the form Telegram's parser
+    reads (a ``language="..."`` attribute on ``<pre>`` loses it). Nested
+    formatting parses as real entities inside the pre block — verified
+    against Telethon's HTML parser — but the final render is the client's,
+    so check it live.
+    """
+    if language:
+        return f'<pre><code class="language-{_attr(language)}">{body}</code></pre>'
+    return f"<pre>{body}</pre>"
+
+
+_PRE_SEGMENT_KINDS = ("plain", "bold", "italic", "code")
+
+
+def _pre_segments(text):
+    """Normalize preformatted content to plain segments.
+
+    Returns the text unchanged for a plain string, else a list of
+    ``(kind, text)`` pairs with kind ``plain``/``bold``/``italic``/``code``.
+    A segment is a plain string, a ``(kind, text)`` pair, or a Kurigram
+    ``RichText`` object (kept as-is for the Kurigram path only).
+    """
+    if isinstance(text, str):
+        return text
+    if isinstance(text, (list, tuple)) and text and isinstance(text[0], str) and text[0] in _PRE_SEGMENT_KINDS and len(text) == 2:
+        return [(text[0], text[1])] if isinstance(text[1], str) else _bad_pre_segment(text)
+    if isinstance(text, (list, tuple)):
+        segments = []
+        rich_types = tuple(
+            cls
+            for cls in (RichTextBold, RichTextItalic, RichTextCode)
+            if cls is not None
+        )
+        for item in text:
+            if isinstance(item, str):
+                segments.append(("plain", item))
+            elif (
+                isinstance(item, (list, tuple))
+                and len(item) == 2
+                and item[0] in _PRE_SEGMENT_KINDS
+                and isinstance(item[1], str)
+            ):
+                segments.append((item[0], item[1]))
+            elif rich_types and isinstance(item, rich_types):
+                segments.append(("rich", item))
+            else:
+                return _bad_pre_segment(item)
+        return segments
+    return _bad_pre_segment(text)
+
+
+def _bad_pre_segment(item):
+    raise ValueError(
+        "preformatted content is a string, a (kind, text) pair with kind "
+        "plain/bold/italic/code, or a list of those"
+    )
+
+
+def rich_text_bold(text):
+    """A ``RichTextBold`` segment for typed preformatted/paragraph blocks."""
+    if RichTextBold is None:
+        raise RuntimeError(
+            "rich_text_bold needs a Kurigram build with RichTextBold"
+        )
+    return RichTextBold(text=text)
+
+
+def rich_text_italic(text):
+    """A ``RichTextItalic`` segment for typed preformatted/paragraph blocks."""
+    if RichTextItalic is None:
+        raise RuntimeError(
+            "rich_text_italic needs a Kurigram build with RichTextItalic"
+        )
+    return RichTextItalic(text=text)
+
+
+def rich_text_code(text):
+    """A ``RichTextCode`` segment for typed preformatted/paragraph blocks."""
+    if RichTextCode is None:
+        raise RuntimeError(
+            "rich_text_code needs a Kurigram build with RichTextCode"
+        )
+    return RichTextCode(text=text)
+
+
+def _validate_pre_language(language):
+    if language is not None and not isinstance(language, str):
+        raise ValueError("a preformatted block's language must be a string")
+    return language or None
+
+
+def rich_block_preformatted(text, language: str = None):
+    """A typed preformatted block with nested inline formatting.
+
+    ``text`` is a plain string, or a list of segments — plain strings,
+    ``(kind, text)`` pairs with kind ``plain``/``bold``/``italic``/``code``,
+    or ``RichText`` objects from ``rich_text_bold`` / ``rich_text_italic`` /
+    ``rich_text_code``::
+
+        rich_block_preformatted([
+            ("bold", "pip"), " install ", ("code", "richgram"),
+        ], language="bash")
+
+    A fenced Markdown block is literal, so this nesting exists only in the
+    HTML and typed-block forms. ``language`` is any string; the client
+    highlights the languages it knows.
+    """
+    if InputRichBlockPreformatted is None:
+        raise RuntimeError(
+            "rich_block_preformatted needs a Kurigram build with "
+            "InputRichBlockPreformatted"
+        )
+    language = _validate_pre_language(language)
+    segments = _pre_segments(text)
+    if isinstance(segments, str):
+        rich_text = segments
+    else:
+        rich_text = []
+        for kind, value in segments:
+            if kind == "rich":
+                rich_text.append(value)
+            elif kind == "bold":
+                rich_text.append(rich_text_bold(value))
+            elif kind == "italic":
+                rich_text.append(rich_text_italic(value))
+            elif kind == "code":
+                rich_text.append(rich_text_code(value))
+            else:
+                rich_text.append(value)
+    return InputRichBlockPreformatted(text=rich_text, language=language)
 
 
 def rich_list(items, ordered: bool = False) -> str:

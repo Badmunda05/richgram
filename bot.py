@@ -14,6 +14,7 @@ from richgram import (
     rich_kv_table,
     rich_note,
     rich_page_index,
+    rich_pre_rich,
     rich_reply,
     rich_todo_list,
     register_custom_emoji,
@@ -45,6 +46,7 @@ def home_text() -> str:
             ("What is this?", "A test bot for the richgram package."),
             ("Multiple collapsibles", "Two sections, one message — each opens on its own."),
         ], open_first=True)
+        + rich_pre_rich("<b>pip</b> install <code>richgram</code>", language="bash")
         + rich_page_index(1, 1, total=3, label="Demo")
     )
 

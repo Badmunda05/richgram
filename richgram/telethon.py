@@ -30,6 +30,7 @@ from .rich_ui import (
     _normalize_html,
     _only_set,
     _plain_fallback,
+    _pre_segments,
     _todo_items,
 )
 
@@ -43,6 +44,7 @@ __all__ = [
     "telethon_block_paragraph",
     "telethon_block_details",
     "telethon_block_todo_list",
+    "telethon_block_preformatted",
     "telethon_rich_send",
     "telethon_rich_send_blocks",
     "telethon_rich_reply",
@@ -201,6 +203,44 @@ def telethon_block_todo_list(items):
             types.PageListItemText(text=text, checkbox=True, checked=done)
             for text, done in _todo_items(items)
         ]
+    )
+
+
+def telethon_block_preformatted(text, language: str = None):
+    """A Telethon preformatted block with nested inline formatting.
+
+    ``text`` is a plain string, or a list of segments — plain strings or
+    ``(kind, text)`` pairs with kind ``plain``/``bold``/``italic``/``code``,
+    the same segment model as ``rich_block_preformatted``. (Kurigram
+    ``RichText`` objects are not accepted here; use the tuple form.)
+    ``language`` is any string; Telethon's constructor requires it, so an
+    empty string is sent when none is given.
+    """
+    types, _functions = _require_telethon()
+    if language is not None and not isinstance(language, str):
+        raise ValueError("a preformatted block's language must be a string")
+    segments = _pre_segments(text)
+    if isinstance(segments, str):
+        rich_text = types.TextPlain(text=segments)
+    else:
+        parts = []
+        for kind, value in segments:
+            if kind == "rich":
+                raise ValueError(
+                    "Telethon preformatted blocks take (kind, text) segments, "
+                    "not Kurigram RichText objects"
+                )
+            if kind == "bold":
+                parts.append(types.TextBold(text=types.TextPlain(text=value)))
+            elif kind == "italic":
+                parts.append(types.TextItalic(text=types.TextPlain(text=value)))
+            elif kind == "code":
+                parts.append(types.TextFixed(text=types.TextPlain(text=value)))
+            else:
+                parts.append(types.TextPlain(text=value))
+        rich_text = types.TextConcat(texts=parts)
+    return types.PageBlockPreformatted(
+        text=rich_text, language=language or ""
     )
 
 
