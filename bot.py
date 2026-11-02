@@ -14,6 +14,7 @@ from richgram import (
     rich_kv_table,
     rich_note,
     rich_reply,
+    rich_todo_list,
     register_custom_emoji,
 )
 
@@ -33,6 +34,11 @@ def home_text() -> str:
         + rich_kv_table([
             ("Library", "richgram"),
             ("Rich support", "yes" if RICH_AVAILABLE else "no"),
+        ])
+        + rich_todo_list([
+            ("Clone richgram", True),
+            ("Try the demo bot", True),
+            ("Build your own checklist", False),
         ])
         + rich_details_group([
             ("What is this?", "A test bot for the richgram package."),

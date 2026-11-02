@@ -33,6 +33,16 @@ try:
 except ImportError:
     InputRichBlockParagraph = None
 
+try:
+    from pyrogram.types import InputRichBlockList
+except ImportError:
+    InputRichBlockList = None
+
+try:
+    from pyrogram.types import InputRichBlockListItem
+except ImportError:
+    InputRichBlockListItem = None
+
 logger = logging.getLogger("richgram")
 
 __all__ = [
@@ -51,6 +61,9 @@ __all__ = [
     "rich_code",
     "rich_pre",
     "rich_list",
+    "rich_todo_list",
+    "rich_todo_list_markdown",
+    "rich_block_todo_list",
     "rich_hr",
     "rich_footer",
     "rich_pull_quote",
@@ -207,6 +220,66 @@ def rich_list(items, ordered: bool = False) -> str:
     tag = "ol" if ordered else "ul"
     body = "".join(f"<li>{'' if item is None else item}</li>" for item in items or ())
     return f"<{tag}>{body}</{tag}>"
+
+
+def _todo_items(items) -> list[tuple[str, bool]]:
+    """Normalize todo items to ``(text, done)`` pairs.
+
+    Each item is a plain string (unchecked), a ``(text, done)`` pair, or a
+    ``{"text": ..., "done": ...}`` dict. The done flag must be a real bool,
+    so a stray truthy value can never silently tick a box.
+    """
+    normalized = []
+    for item in items or ():
+        if isinstance(item, str):
+            text, done = item, False
+        elif isinstance(item, dict):
+            text, done = item.get("text", ""), item.get("done", False)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            text, done = item
+        else:
+            raise ValueError(
+                "a todo item is a string, a (text, done) pair, "
+                "or {'text': ..., 'done': ...}"
+            )
+        if not isinstance(text, str):
+            raise ValueError("a todo item's text must be a string")
+        if not isinstance(done, bool):
+            raise ValueError("a todo item's done flag must be True or False")
+        normalized.append((text, done))
+    return normalized
+
+
+def rich_todo_list(items) -> str:
+    """A checklist as Rich HTML.
+
+    Renders as native checkboxes on Telegram (Bot API 10.1+): each item is
+    ``<li><input type="checkbox" checked>`` when done, without ``checked``
+    when open. Item text is used as-is, like ``rich_list`` — pass
+    ``rich_esc(...)`` or inline markup yourself when the text is user input.
+
+    The boxes show the state you send; they are not tappable toggles. To
+    flip an item, re-send or edit the message with the new state.
+    """
+    body = "".join(
+        f"<li><input type=\"checkbox\"{' checked' if done else ''}>{text}</li>"
+        for text, done in _todo_items(items)
+    )
+    return f"<ul>{body}</ul>"
+
+
+def rich_todo_list_markdown(items) -> str:
+    """The same checklist as Rich Markdown (``- [ ]`` / ``- [x]`` lines).
+
+    Send it with ``rich_send(client, chat, text, markdown=True)``. Item text
+    must be a single line — a newline would split the item into two lines.
+    """
+    lines = []
+    for text, done in _todo_items(items):
+        if "\n" in text or "\r" in text:
+            raise ValueError("a todo item's text must be a single line for Markdown")
+        lines.append(f"- [{'x' if done else ' '}] {text}")
+    return "\n".join(lines)
 
 
 def rich_hr() -> str:
@@ -634,6 +707,51 @@ def rich_block_details(summary: str, blocks, open: bool = False):
     )
 
 
+def rich_block_todo_list(items):
+    """A typed checklist block for use in ``rich_send_blocks``.
+
+    Builds an ``InputRichBlockList`` whose items carry ``has_checkbox`` and
+    ``is_checked`` — the same native checkboxes the HTML and Markdown forms
+    render, as real block objects.
+    """
+    if InputRichBlockList is None or InputRichBlockListItem is None:
+        raise RuntimeError(
+            "rich_block_todo_list needs a Kurigram build with "
+            "InputRichBlockList / InputRichBlockListItem"
+        )
+    if InputRichBlockParagraph is None:
+        raise RuntimeError(
+            "rich_block_todo_list needs a Kurigram build with InputRichBlockParagraph"
+        )
+    return InputRichBlockList(
+        items=[
+            InputRichBlockListItem(
+                blocks=[InputRichBlockParagraph(text=text)],
+                has_checkbox=True,
+                is_checked=done,
+            )
+            for text, done in _todo_items(items)
+        ]
+    )
+
+
+_TODO_LI_RE = re.compile(r"<li\b[^>]*>\s*(<input\b[^>]*>)", re.I)
+
+
+def _todo_li_to_plain(match) -> str:
+    """Render a checklist item as ``[x] `` / ``[ ] ``, or leave it alone.
+
+    Only checkbox inputs are converted; any other input inside an <li> is
+    returned untouched so the plain-list handling still sees the <li>.
+    """
+    tag = match.group(1)
+    if "checkbox" not in tag.lower():
+        return match.group(0)
+    if re.search(r"\bchecked\b", tag, re.I):
+        return "[x] "
+    return "[ ] "
+
+
 _DETAILS_OUTLINE_RE = re.compile(
     r"<details\b[^>]*>|</details>|<summary>(.*?)</summary>", re.I | re.S
 )
@@ -667,6 +785,7 @@ def rich_to_plain(html_text: str) -> str:
     text = str(html_text)
     text = _EMOJI_TAG_RE.sub(r"\1", text)
     text = _details_to_outline(text, bold=False)
+    text = _TODO_LI_RE.sub(_todo_li_to_plain, text)
     text = re.sub(r"<li\b[^>]*>", "\u2022 ", text, flags=re.I)
     text = re.sub(r"<hr\s*/?>", "\n", text, flags=re.I)
     text = _CELL_BREAK_RE.sub("\x1f", text)
@@ -746,7 +865,9 @@ def _plain_fallback(html_text: str) -> str:
     text = re.sub(r"<tg-math-block>(.*?)</tg-math-block>", r"<code>\1</code>", text, flags=re.I | re.S)
     text = _BUTTON_RE.sub(_button_to_plain, text)
     text = re.sub(r"<button[^>]*>(.*?)</button>", r"<b>\1</b>", text, flags=re.I | re.S)
+    text = _TODO_LI_RE.sub(_todo_li_to_plain, text)
     text = re.sub(r"<li\b[^>]*>", "\u2022 ", text, flags=re.I)
+    text = re.sub(r"<input\b[^>]*>", "", text, flags=re.I)
     text = re.sub(r"</li>", "\n", text, flags=re.I)
     text = re.sub(r"<hr\s*/?>", "\n\u2500\u2500\u2500\u2500\u2500\n", text, flags=re.I)
     text = re.sub(r"</tg-button-row>", "\n", text, flags=re.I)

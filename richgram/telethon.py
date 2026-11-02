@@ -30,6 +30,7 @@ from .rich_ui import (
     _normalize_html,
     _only_set,
     _plain_fallback,
+    _todo_items,
 )
 
 logger = logging.getLogger("richgram.telethon")
@@ -41,6 +42,7 @@ __all__ = [
     "telethon_edit_request",
     "telethon_block_paragraph",
     "telethon_block_details",
+    "telethon_block_todo_list",
     "telethon_rich_send",
     "telethon_rich_send_blocks",
     "telethon_rich_reply",
@@ -183,6 +185,22 @@ def telethon_block_details(title: str, blocks, open: bool = False):
         blocks=list(blocks or ()),
         title=title,
         open=True if open else None,
+    )
+
+
+def telethon_block_todo_list(items):
+    """A Telethon checklist block for use in ``telethon_rich_send_blocks``.
+
+    Builds a ``PageBlockList`` of ``PageListItemText`` items carrying
+    ``checkbox`` and ``checked`` — the Telethon form of the same native
+    checkboxes ``rich_todo_list`` and ``rich_block_todo_list`` produce.
+    """
+    types, _functions = _require_telethon()
+    return types.PageBlockList(
+        items=[
+            types.PageListItemText(text=text, checkbox=True, checked=done)
+            for text, done in _todo_items(items)
+        ]
     )
 
 

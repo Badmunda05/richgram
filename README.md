@@ -224,6 +224,48 @@ When a rich message is rejected and richgram falls back to plain text,
 collapsibles become an indented outline (`▸` per section, deeper sections
 indented), so the structure survives instead of collapsing flat.
 
+## Todo lists
+
+A checklist renders as native checkboxes — not emoji bullets:
+
+```python
+from richgram import rich_todo_list
+
+text = rich_todo_list([
+    ("Buy milk", False),
+    ("Book tickets", True),
+    "Call mom",  # a plain string is an unchecked item
+    {"text": "Ship it", "done": True},
+])
+```
+
+That is Rich HTML (`<li><input type="checkbox" checked>...`). The same
+list as Rich Markdown, for `rich_send(..., markdown=True)`:
+
+```python
+from richgram import rich_todo_list_markdown
+
+rich_todo_list_markdown([("Buy milk", False), ("Book tickets", True)])
+# "- [ ] Buy milk\n- [x] Book tickets"
+```
+
+Or as typed blocks, for `rich_send_blocks` (Kurigram) and
+`telethon_rich_send_blocks` (Telethon) — both carry the checkbox as a real
+field (`has_checkbox` / `is_checked`, `checkbox` / `checked`):
+
+```python
+from richgram import rich_block_todo_list
+from richgram.telethon import telethon_block_todo_list
+
+rich_block_todo_list([("Buy milk", False), ("Book tickets", True)])
+telethon_block_todo_list([("Buy milk", False), ("Book tickets", True)])
+```
+
+The boxes show the state you send; they are not tappable toggles. To flip
+an item, re-send or edit the message with the new state. When a message
+falls back to plain text, todo items render as `[ ] Buy milk` / `[x] Book
+tickets`, so the state survives there too.
+
 ## Content blocks
 
 ```python
@@ -391,7 +433,8 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 `rich_note`, `rich_table`, `rich_kv_table`, `rich_details`,
 `rich_details_group`, `rich_details_nested`, `rich_block_details`,
 `rich_block_paragraph`, `rich_code`,
-`rich_pre`, `rich_list`, `rich_hr`, `rich_footer`, `rich_pull_quote`,
+`rich_pre`, `rich_list`, `rich_todo_list`, `rich_todo_list_markdown`,
+`rich_block_todo_list`, `rich_hr`, `rich_footer`, `rich_pull_quote`,
 `rich_math`, `rich_anchor`, `rich_thinking`, `rich_img`, `rich_emoji`,
 `rich_emoji_markdown`, `rich_text_custom_emoji`, `register_custom_emoji`,
 `register_custom_emojis`, `clear_custom_emojis`, `custom_emoji_names`,
@@ -404,7 +447,7 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 Telethon transport (`from richgram.telethon import ...`):
 `TELETHON_RICH_AVAILABLE`, `telethon_input_rich`, `telethon_send_request`,
 `telethon_edit_request`, `telethon_block_paragraph`, `telethon_block_details`,
-`telethon_rich_send`, `telethon_rich_send_blocks`, `telethon_rich_reply`,
+`telethon_block_todo_list`, `telethon_rich_send`, `telethon_rich_send_blocks`, `telethon_rich_reply`,
 `telethon_rich_edit`
 
 ## Demo bot
