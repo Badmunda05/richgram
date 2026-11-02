@@ -2,12 +2,20 @@
 
 Telegram Bot API 10.3 rich messages for Pyrogram, Pyrofork and Kurigram bots:
 tables, details, lists, colored buttons, drafts and ephemeral messages, with an
-automatic plain-text fallback when a rich message is rejected.
+automatic plain-text fallback when a rich message is rejected. The same
+builders also work over MTProto via the optional Telethon transport
+(`richgram.telethon`).
 
 ## Install
 
 ```bash
 pip install richgram
+```
+
+For the Telethon transport:
+
+```bash
+pip install "richgram[telethon]"
 ```
 
 Or straight from GitHub:
@@ -279,6 +287,62 @@ Markdown instead of HTML:
 await rich_send(client, chat_id, "# Title\n\n**bold** text", markdown=True)
 ```
 
+## Telethon (MTProto)
+
+Telethon has no `send_rich_message`, but the same rich payload travels
+over MTProto as a native request. `richgram.telethon` builds it for you —
+the HTML builders are transport-independent, so the same text works on
+both transports:
+
+```python
+from telethon import TelegramClient
+from richgram import rich_heading, rich_details_group
+from richgram.telethon import telethon_rich_send, telethon_rich_edit
+
+client = TelegramClient("session", api_id, api_hash)
+
+text = rich_heading("Now Playing", level=3) + rich_details_group([
+    ("Track", "Song name"),
+    ("Lyrics", "La la la"),
+])
+
+msg = await telethon_rich_send(client, chat_id, text)
+await telethon_rich_edit(msg, text + " (updated)")
+```
+
+How it works: the adapter sends a raw `messages.SendMessageRequest` /
+`messages.EditMessageRequest` with `rich_message` set to an
+`InputRichMessageHTML` / `InputRichMessageMarkdown` (the same mechanism
+Hermes uses). The TL schema still requires the ordinary `message` field,
+so it is filled with the same rich source text. Telethon resolves the
+peer and generates `random_id` itself when the request is invoked.
+
+Like `rich_send`, a rich request Telegram rejects falls back to an
+ordinary Telethon `send_message` with the plain fallback text — and
+Telethon's HTML parser understands `<tg-emoji>`, so premium emoji survive
+the plain path too. The builders for replies and blocks mirror the
+Pyrogram side:
+
+```python
+from richgram.telethon import (
+    telethon_rich_reply, telethon_rich_send_blocks,
+    telethon_block_details, telethon_block_paragraph,
+)
+
+await telethon_rich_reply(message, text)
+await telethon_rich_send_blocks(client, chat_id, [
+    telethon_block_details("Guide", [telethon_block_paragraph("Start here.")]),
+])
+```
+
+Blocks are Telethon `PageBlock` objects, not Pyrogram `InputRichBlock`
+objects: `PageBlockDetails(blocks, title, open)` takes its arguments in
+the opposite order to Pyrogram's `InputRichBlockDetails(summary, blocks)`.
+`telethon_send_request` / `telethon_edit_request` return the raw requests
+directly if you want to invoke them yourself, and `TELETHON_RICH_AVAILABLE`
+reports whether the installed Telethon build has the rich-message types
+(telethon>=1.45 is known to work).
+
 ## Ephemeral messages
 
 ```python
@@ -337,6 +401,12 @@ Plain-text helpers: `rich_to_plain(html)` and `rich_caption(html)`.
 `rich_reply`, `rich_edit`, `rich_edit_inline`, `rich_answer`,
 `ephemeral_edit`, `ephemeral_delete`, `RichDraft`
 
+Telethon transport (`from richgram.telethon import ...`):
+`TELETHON_RICH_AVAILABLE`, `telethon_input_rich`, `telethon_send_request`,
+`telethon_edit_request`, `telethon_block_paragraph`, `telethon_block_details`,
+`telethon_rich_send`, `telethon_rich_send_blocks`, `telethon_rich_reply`,
+`telethon_rich_edit`
+
 ## Demo bot
 
 `bot.py` is a small demo bot (`/start` with shuffling button colours):
@@ -366,6 +436,9 @@ connection. `tests/integrations` sends a real message when `API_ID`,
 - A **Pyrogram / Pyrofork / Kurigram** build that has Bot API 10.3 rich message
   support (`InputRichMessage` and `Client.send_rich_message`).
   `RICH_AVAILABLE` is `True` when your build has it.
+- For the Telethon transport: **Telethon >= 1.45** (`pip install "richgram[telethon]"`).
+  `TELETHON_RICH_AVAILABLE` is `True` when the installed Telethon build has
+  the rich-message types.
 
 ## Credits
 
