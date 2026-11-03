@@ -24,7 +24,8 @@ dependencies = ["kurigram"]
 
 [project.optional-dependencies]
 http = ["httpx"]
-test = ["pytest>=8", "pytest-asyncio>=0.24"]
+telethon = ["telethon>=1.45"]
+test = ["pytest>=8", "pytest-asyncio>=0.24", "telethon>=1.45"]
 
 [project.urls]
 Homepage = "https://github.com/Badmunda05/richgram"

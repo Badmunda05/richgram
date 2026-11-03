@@ -18,6 +18,51 @@ try:
 except ImportError:
     EphemeralMessageParameters = None
 
+try:
+    from pyrogram.types import RichTextCustomEmoji
+except ImportError:
+    RichTextCustomEmoji = None
+
+try:
+    from pyrogram.types import InputRichBlockDetails
+except ImportError:
+    InputRichBlockDetails = None
+
+try:
+    from pyrogram.types import InputRichBlockParagraph
+except ImportError:
+    InputRichBlockParagraph = None
+
+try:
+    from pyrogram.types import InputRichBlockList
+except ImportError:
+    InputRichBlockList = None
+
+try:
+    from pyrogram.types import InputRichBlockListItem
+except ImportError:
+    InputRichBlockListItem = None
+
+try:
+    from pyrogram.types import InputRichBlockPreformatted
+except ImportError:
+    InputRichBlockPreformatted = None
+
+try:
+    from pyrogram.types import RichTextBold
+except ImportError:
+    RichTextBold = None
+
+try:
+    from pyrogram.types import RichTextItalic
+except ImportError:
+    RichTextItalic = None
+
+try:
+    from pyrogram.types import RichTextCode
+except ImportError:
+    RichTextCode = None
+
 logger = logging.getLogger("richgram")
 
 __all__ = [
@@ -29,16 +74,39 @@ __all__ = [
     "rich_table",
     "rich_kv_table",
     "rich_details",
+    "rich_details_group",
+    "rich_details_nested",
+    "rich_block_details",
+    "rich_block_paragraph",
     "rich_code",
     "rich_pre",
+    "rich_pre_rich",
+    "rich_block_preformatted",
+    "rich_text_bold",
+    "rich_text_italic",
+    "rich_text_code",
     "rich_list",
+    "rich_todo_list",
+    "rich_todo_list_markdown",
+    "rich_block_todo_list",
     "rich_hr",
     "rich_footer",
+    "rich_page_index",
     "rich_pull_quote",
     "rich_math",
     "rich_anchor",
     "rich_thinking",
     "rich_img",
+    "rich_emoji",
+    "rich_emoji_markdown",
+    "rich_text_custom_emoji",
+    "register_custom_emoji",
+    "register_custom_emojis",
+    "clear_custom_emojis",
+    "custom_emoji_names",
+    "rich_emoji_named",
+    "expand_emoji_shortcodes",
+    "fetch_custom_emoji",
     "rich_button",
     "rich_button_row",
     "rich_to_plain",
@@ -66,6 +134,8 @@ except Exception:
 
 BUTTON_STYLES = ("primary", "success", "danger", "link", "default")
 
+_MAX_COPY_TEXT_CHARS = 256
+
 _RICH_ONLY_TAGS = (
     "h1", "h2", "h3", "h4", "h5", "h6",
     "table", "thead", "tbody", "tr", "th", "td",
@@ -86,8 +156,11 @@ _ANY_TAG_RE = re.compile(r"<[^>]+>")
 _RICH_TAGS_RE = re.compile(
     r"</?(?:h[1-6]|table|thead|tbody|tr|th|td|details|summary|mark|sub|sup|ul|ol|li|hr|aside|footer"
     r"|tg-button-row|tg-button|tg-math-block|tg-collage|tg-slideshow|tg-map|tg-document|tg-thinking"
-    r"|button|img)(?=[\s/>])",
+    r"|tg-emoji|emoji|button|img)(?=[\s/>])",
     re.I,
+)
+_LEGACY_EMOJI_RE = re.compile(
+    r'<emoji\s+id="([^"]*)"\s*>(.*?)</emoji>', re.I | re.S
 )
 _BUTTON_RE = re.compile(r"<tg-button\b([^>]*)>(.*?)</tg-button>", re.I | re.S)
 _ATTR_RE = re.compile(r'([\w-]+)\s*=\s*"([^"]*)"')
@@ -171,10 +244,213 @@ def rich_pre(value, language: str = None) -> str:
     return f"<pre>{body}</pre>"
 
 
+def rich_pre_rich(body: str, language: str = None) -> str:
+    """A preformatted block with nested inline formatting inside it.
+
+    Unlike ``rich_pre``, which escapes everything, ``body`` is used as-is,
+    so inline markup nests inside the code block — bold a keyword, mark a
+    value as inline code::
+
+        rich_pre_rich("<b>pip</b> install <code>richgram</code>", language="bash")
+
+    Escape user-supplied text with ``rich_esc(...)`` before composing the
+    body; data is never markup. The language travels in the
+    ``<code class="language-...">`` wrapper, the form Telegram's parser
+    reads (a ``language="..."`` attribute on ``<pre>`` loses it). Nested
+    formatting parses as real entities inside the pre block — verified
+    against Telethon's HTML parser — but the final render is the client's,
+    so check it live.
+    """
+    if language:
+        return f'<pre><code class="language-{_attr(language)}">{body}</code></pre>'
+    return f"<pre>{body}</pre>"
+
+
+_PRE_SEGMENT_KINDS = ("plain", "bold", "italic", "code")
+
+
+def _pre_segments(text):
+    """Normalize preformatted content to plain segments.
+
+    Returns the text unchanged for a plain string, else a list of
+    ``(kind, text)`` pairs with kind ``plain``/``bold``/``italic``/``code``.
+    A segment is a plain string, a ``(kind, text)`` pair, or a Kurigram
+    ``RichText`` object (kept as-is for the Kurigram path only).
+    """
+    if isinstance(text, str):
+        return text
+    if isinstance(text, (list, tuple)) and text and isinstance(text[0], str) and text[0] in _PRE_SEGMENT_KINDS and len(text) == 2:
+        return [(text[0], text[1])] if isinstance(text[1], str) else _bad_pre_segment(text)
+    if isinstance(text, (list, tuple)):
+        segments = []
+        rich_types = tuple(
+            cls
+            for cls in (RichTextBold, RichTextItalic, RichTextCode)
+            if cls is not None
+        )
+        for item in text:
+            if isinstance(item, str):
+                segments.append(("plain", item))
+            elif (
+                isinstance(item, (list, tuple))
+                and len(item) == 2
+                and item[0] in _PRE_SEGMENT_KINDS
+                and isinstance(item[1], str)
+            ):
+                segments.append((item[0], item[1]))
+            elif rich_types and isinstance(item, rich_types):
+                segments.append(("rich", item))
+            else:
+                return _bad_pre_segment(item)
+        return segments
+    return _bad_pre_segment(text)
+
+
+def _bad_pre_segment(item):
+    raise ValueError(
+        "preformatted content is a string, a (kind, text) pair with kind "
+        "plain/bold/italic/code, or a list of those"
+    )
+
+
+def rich_text_bold(text):
+    """A ``RichTextBold`` segment for typed preformatted/paragraph blocks."""
+    if RichTextBold is None:
+        raise RuntimeError(
+            "rich_text_bold needs a Kurigram build with RichTextBold"
+        )
+    return RichTextBold(text=text)
+
+
+def rich_text_italic(text):
+    """A ``RichTextItalic`` segment for typed preformatted/paragraph blocks."""
+    if RichTextItalic is None:
+        raise RuntimeError(
+            "rich_text_italic needs a Kurigram build with RichTextItalic"
+        )
+    return RichTextItalic(text=text)
+
+
+def rich_text_code(text):
+    """A ``RichTextCode`` segment for typed preformatted/paragraph blocks."""
+    if RichTextCode is None:
+        raise RuntimeError(
+            "rich_text_code needs a Kurigram build with RichTextCode"
+        )
+    return RichTextCode(text=text)
+
+
+def _validate_pre_language(language):
+    if language is not None and not isinstance(language, str):
+        raise ValueError("a preformatted block's language must be a string")
+    return language or None
+
+
+def rich_block_preformatted(text, language: str = None):
+    """A typed preformatted block with nested inline formatting.
+
+    ``text`` is a plain string, or a list of segments — plain strings,
+    ``(kind, text)`` pairs with kind ``plain``/``bold``/``italic``/``code``,
+    or ``RichText`` objects from ``rich_text_bold`` / ``rich_text_italic`` /
+    ``rich_text_code``::
+
+        rich_block_preformatted([
+            ("bold", "pip"), " install ", ("code", "richgram"),
+        ], language="bash")
+
+    A fenced Markdown block is literal, so this nesting exists only in the
+    HTML and typed-block forms. ``language`` is any string; the client
+    highlights the languages it knows.
+    """
+    if InputRichBlockPreformatted is None:
+        raise RuntimeError(
+            "rich_block_preformatted needs a Kurigram build with "
+            "InputRichBlockPreformatted"
+        )
+    language = _validate_pre_language(language)
+    segments = _pre_segments(text)
+    if isinstance(segments, str):
+        rich_text = segments
+    else:
+        rich_text = []
+        for kind, value in segments:
+            if kind == "rich":
+                rich_text.append(value)
+            elif kind == "bold":
+                rich_text.append(rich_text_bold(value))
+            elif kind == "italic":
+                rich_text.append(rich_text_italic(value))
+            elif kind == "code":
+                rich_text.append(rich_text_code(value))
+            else:
+                rich_text.append(value)
+    return InputRichBlockPreformatted(text=rich_text, language=language)
+
+
 def rich_list(items, ordered: bool = False) -> str:
     tag = "ol" if ordered else "ul"
     body = "".join(f"<li>{'' if item is None else item}</li>" for item in items or ())
     return f"<{tag}>{body}</{tag}>"
+
+
+def _todo_items(items) -> list[tuple[str, bool]]:
+    """Normalize todo items to ``(text, done)`` pairs.
+
+    Each item is a plain string (unchecked), a ``(text, done)`` pair, or a
+    ``{"text": ..., "done": ...}`` dict. The done flag must be a real bool,
+    so a stray truthy value can never silently tick a box.
+    """
+    normalized = []
+    for item in items or ():
+        if isinstance(item, str):
+            text, done = item, False
+        elif isinstance(item, dict):
+            text, done = item.get("text", ""), item.get("done", False)
+        elif isinstance(item, (list, tuple)) and len(item) == 2:
+            text, done = item
+        else:
+            raise ValueError(
+                "a todo item is a string, a (text, done) pair, "
+                "or {'text': ..., 'done': ...}"
+            )
+        if not isinstance(text, str):
+            raise ValueError("a todo item's text must be a string")
+        if not isinstance(done, bool):
+            raise ValueError("a todo item's done flag must be True or False")
+        normalized.append((text, done))
+    return normalized
+
+
+def rich_todo_list(items) -> str:
+    """A checklist as Rich HTML.
+
+    Renders as native checkboxes on Telegram (Bot API 10.1+): each item is
+    ``<li><input type="checkbox" checked>`` when done, without ``checked``
+    when open. Item text is used as-is, like ``rich_list`` — pass
+    ``rich_esc(...)`` or inline markup yourself when the text is user input.
+
+    The boxes show the state you send; they are not tappable toggles. To
+    flip an item, re-send or edit the message with the new state.
+    """
+    body = "".join(
+        f"<li><input type=\"checkbox\"{' checked' if done else ''}>{text}</li>"
+        for text, done in _todo_items(items)
+    )
+    return f"<ul>{body}</ul>"
+
+
+def rich_todo_list_markdown(items) -> str:
+    """The same checklist as Rich Markdown (``- [ ]`` / ``- [x]`` lines).
+
+    Send it with ``rich_send(client, chat, text, markdown=True)``. Item text
+    must be a single line — a newline would split the item into two lines.
+    """
+    lines = []
+    for text, done in _todo_items(items):
+        if "\n" in text or "\r" in text:
+            raise ValueError("a todo item's text must be a single line for Markdown")
+        lines.append(f"- [{'x' if done else ' '}] {text}")
+    return "\n".join(lines)
 
 
 def rich_hr() -> str:
@@ -183,6 +459,39 @@ def rich_hr() -> str:
 
 def rich_footer(text: str) -> str:
     return f"<footer>{text}</footer>"
+
+
+def rich_page_index(page: int, pages: int, total: int = None, label: str = None) -> str:
+    """A page indexation line for the bottom of a paginated message.
+
+    Renders as an italic footer, the universal style for page indexation:
+    ``<footer><i>Page 2 of 5 • total 42</i></footer>``, or ``Page 2 of 5``
+    when the total is unknown. ``label`` names the list being paged
+    (``Settings · Page 2 of 5``). Page counts are 1-based; ``pages`` must
+    cover ``page`` and ``total`` must not be negative.
+    """
+    if (
+        isinstance(page, bool)
+        or isinstance(pages, bool)
+        or not isinstance(page, int)
+        or not isinstance(pages, int)
+        or page < 1
+        or pages < page
+    ):
+        raise ValueError("page indexation needs 1-based page/pages counts")
+    if total is not None and (
+        isinstance(total, bool) or not isinstance(total, int) or total < 0
+    ):
+        raise ValueError("page indexation needs a non-negative total")
+    if label is not None and not isinstance(label, str):
+        raise ValueError("page indexation label must be a string")
+    parts = []
+    if label:
+        parts.append(rich_esc(label))
+    parts.append(f"Page {page} of {pages}")
+    if total is not None:
+        parts.append(f"total {total}")
+    return rich_footer(f"<i>{' • '.join(parts)}</i>")
 
 
 def rich_pull_quote(text: str) -> str:
@@ -201,13 +510,233 @@ def rich_thinking() -> str:
     return "<tg-thinking></tg-thinking>"
 
 
+_MAX_CUSTOM_EMOJI_ID = 2**63 - 1
+
+
+def _validate_custom_emoji_id(document_id) -> str:
+    if isinstance(document_id, bool):
+        raise ValueError("custom emoji id must be digits, not a boolean")
+    if isinstance(document_id, int):
+        value = document_id
+    elif isinstance(document_id, str):
+        text = document_id.strip()
+        if not text.isdigit():
+            raise ValueError(
+                f"invalid custom emoji id {document_id!r}: expected digits only"
+            )
+        value = int(text)
+    else:
+        raise ValueError(
+            f"invalid custom emoji id {document_id!r}: expected an int or a digit string"
+        )
+    if not 1 <= value <= _MAX_CUSTOM_EMOJI_ID:
+        raise ValueError(
+            f"invalid custom emoji id {document_id!r}: out of range 1..{_MAX_CUSTOM_EMOJI_ID}"
+        )
+    return str(value)
+
+
+def _validate_emoji_alt(alt) -> str:
+    if not isinstance(alt, str) or not alt.strip():
+        raise ValueError(
+            "custom emoji needs a non-empty alternative emoji, e.g. rich_emoji(id, '🔥')"
+        )
+    return alt.strip()
+
+
+def rich_emoji(document_id, alt: str) -> str:
+    """A premium custom emoji in Bot API HTML form.
+
+    Example: ``rich_emoji("5368324170671202286", "🔥")`` ->
+    ``<tg-emoji emoji-id="5368324170671202286">🔥</tg-emoji>``.
+
+    ``document_id`` is the custom-emoji sticker's document id (not a
+    file_id, pack name, or t.me/addemoji link). Read one off a message
+    entity of type custom_emoji, a sticker set (``Sticker.custom_emoji_id``),
+    or :func:`fetch_custom_emoji`. A fabricated id fails at send time, so
+    the shape is validated here (digits only, fits in a signed 64-bit int).
+
+    ``alt`` is the plain emoji shown where the custom emoji cannot be
+    displayed (notifications, forwards by non-premium users, and richgram's
+    plain-text fallback). It is required: Telegram requires a valid emoji
+    as the content of the tag.
+
+    Eligibility (Bot API 9.4+): a bot may send custom emoji if its owner
+    has Telegram Premium (direct messages to private/group/supergroup
+    chats) or if the bot purchased additional usernames on Fragment (also
+    channels). richgram cannot check eligibility; an ineligible send is
+    rejected by Telegram and :func:`rich_send` falls back to ``alt``.
+    """
+    emoji_id = _validate_custom_emoji_id(document_id)
+    alt_text = _validate_emoji_alt(alt)
+    return f'<tg-emoji emoji-id="{emoji_id}">{rich_esc(alt_text)}</tg-emoji>'
+
+
+def rich_emoji_markdown(document_id, alt: str) -> str:
+    """The same custom emoji in MarkdownV2 form: ``![alt](tg://emoji?id=...)``."""
+    emoji_id = _validate_custom_emoji_id(document_id)
+    alt_text = _validate_emoji_alt(alt)
+    return f"![{alt_text}](tg://emoji?id={emoji_id})"
+
+
+def rich_text_custom_emoji(document_id, alt: str):
+    """A typed ``RichTextCustomEmoji`` for use in ``rich_send_blocks``.
+
+    Example: ``InputRichBlockParagraph(text=[rich_text_custom_emoji(id, "🔥")])``.
+    Requires a Kurigram build with ``RichTextCustomEmoji``.
+    """
+    if RichTextCustomEmoji is None:
+        raise RuntimeError(
+            "rich_text_custom_emoji needs a Kurigram build with RichTextCustomEmoji"
+        )
+    return RichTextCustomEmoji(
+        custom_emoji_id=_validate_custom_emoji_id(document_id),
+        alternative_text=_validate_emoji_alt(alt),
+    )
+
+
+async def fetch_custom_emoji(client, document_id):
+    """Verify a custom emoji id and get its sticker (or ``None``).
+
+    Calls ``client.get_custom_emoji_stickers([id])`` (at most 200 ids per
+    call; this helper checks one). The returned sticker carries
+    ``.custom_emoji_id`` and ``.emoji`` — the fallback glyph to pass as
+    ``alt`` to :func:`rich_emoji`.
+    """
+    emoji_id = _validate_custom_emoji_id(document_id)
+    getter = getattr(client, "get_custom_emoji_stickers", None)
+    if getter is None:
+        raise RuntimeError(
+            "fetch_custom_emoji needs a client with get_custom_emoji_stickers "
+            "(Kurigram / Pyrogram)"
+        )
+    stickers = await getter([emoji_id])
+    if not stickers:
+        return None
+    return stickers[0]
+
+
+_CUSTOM_EMOJI_NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
+_SHORTCODE_RE = re.compile(r":([A-Za-z][A-Za-z0-9_-]*):")
+_VERBATIM_SPLIT_RE = re.compile(
+    r"(<(?:pre|code)\b[^>]*>.*?</(?:pre|code)>)", re.I | re.S
+)
+
+_custom_emojis: dict = {}
+
+
+def _validate_custom_emoji_name(name) -> str:
+    if not isinstance(name, str) or not _CUSTOM_EMOJI_NAME_RE.match(name.strip()):
+        raise ValueError(
+            f"invalid custom emoji name {name!r}: use letters, digits, '_' or '-', "
+            "starting with a letter (e.g. 'fire')"
+        )
+    return name.strip().lower()
+
+
+def register_custom_emoji(name, document_id, alt: str) -> str:
+    """Register one custom emoji by name; returns its markup."""
+    key = _validate_custom_emoji_name(name)
+    emoji_id = _validate_custom_emoji_id(document_id)
+    alt_text = _validate_emoji_alt(alt)
+    _custom_emojis[key] = (emoji_id, alt_text)
+    return rich_emoji(emoji_id, alt_text)
+
+
+def register_custom_emojis(mapping) -> None:
+    """Register many custom emojis at once.
+
+    ``mapping`` is ``{name: (document_id, alt)}`` or
+    ``{name: {"id": document_id, "alt": alt}}``.
+    """
+    for name, value in dict(mapping).items():
+        if isinstance(value, dict):
+            document_id, alt = value.get("id"), value.get("alt")
+        else:
+            document_id, alt = value
+        register_custom_emoji(name, document_id, alt)
+
+
+def clear_custom_emojis() -> None:
+    _custom_emojis.clear()
+
+
+def custom_emoji_names() -> list:
+    return sorted(_custom_emojis)
+
+
+def rich_emoji_named(name) -> str:
+    """Markup for a registered custom emoji, by name."""
+    key = _validate_custom_emoji_name(name)
+    try:
+        emoji_id, alt = _custom_emojis[key]
+    except KeyError:
+        known = ", ".join(custom_emoji_names()) or "(none registered)"
+        raise KeyError(
+            f"unknown custom emoji {name!r}; registered names: {known}"
+        ) from None
+    return rich_emoji(emoji_id, alt)
+
+
+def expand_emoji_shortcodes(html_text: str) -> str:
+    """Replace registered ``:name:`` shortcodes with custom-emoji markup.
+
+    Register names first, e.g. ``register_custom_emoji("fire", id, "🔥")``,
+    then use as an html hook so ``rich_send`` expands them on the way out::
+
+        add_html_hook(expand_emoji_shortcodes)
+
+    Only registered names expand; unknown shortcodes (and times like
+    12:30) are left untouched. Shortcodes inside ``<pre>``/``<code>`` are
+    never expanded, so code samples stay verbatim.
+    """
+    if not html_text or not _custom_emojis:
+        return html_text or ""
+
+    def _expand(segment: str) -> str:
+        def _replace(match):
+            key = match.group(1).lower()
+            entry = _custom_emojis.get(key)
+            if entry is None:
+                return match.group(0)
+            return rich_emoji(entry[0], entry[1])
+
+        return _SHORTCODE_RE.sub(_replace, segment)
+
+    parts = _VERBATIM_SPLIT_RE.split(str(html_text))
+    for i in range(0, len(parts), 2):
+        parts[i] = _expand(parts[i])
+    return "".join(parts)
+
+
+def _validate_copy_text(copy_text) -> str:
+    if (
+        not isinstance(copy_text, str)
+        or not copy_text
+        or len(copy_text) > _MAX_COPY_TEXT_CHARS
+        or "\x00" in copy_text
+    ):
+        raise ValueError("a copy button needs text of 1-256 characters")
+    return copy_text
+
+
 def rich_button(
     text: str,
     url: str = None,
     callback_data: str = None,
     style: str = None,
+    copy_text: str = None,
 ) -> str:
     style_attr = f' style="{_attr(style)}"' if style in BUTTON_STYLES else ""
+    if copy_text is not None:
+        if url or callback_data:
+            raise ValueError(
+                "a copy button takes only copy_text, not url or callback_data"
+            )
+        return (
+            f'<tg-button type="copy_text"{style_attr} '
+            f'text="{_attr(_validate_copy_text(copy_text))}">{text}</tg-button>'
+        )
     if callback_data:
         return (
             f'<tg-button type="callback_data"{style_attr} '
@@ -231,6 +760,10 @@ def rich_table(headers, rows, border: int = 1) -> str:
         cells = "".join(f"<th>{'' if h is None else h}</th>" for h in headers)
         parts.append(f"<tr>{cells}</tr>")
     for row in rows or ():
+        if row is None:
+            row = ()
+        elif isinstance(row, str):
+            row = (row,)
         cells = "".join(f"<td>{'' if c is None else c}</td>" for c in row)
         parts.append(f"<tr>{cells}</tr>")
     parts.append("</table>")
@@ -246,9 +779,233 @@ def rich_kv_table(pairs, headers=None, border: int = 1) -> str:
     return rich_table(headers, rows, border=border)
 
 
+_MAX_DETAILS_DEPTH = 16
+_DETAILS_TAG_RE = re.compile(r"<details\b[^>]*>|</details>", re.I)
+
+
+def _max_details_depth(html_text: str) -> int:
+    depth = 0
+    deepest = 0
+    for match in _DETAILS_TAG_RE.finditer(str(html_text or "")):
+        if match.group(0).startswith("</"):
+            depth = max(0, depth - 1)
+        else:
+            depth += 1
+            deepest = max(deepest, depth)
+    return deepest
+
+
+def _validate_details_summary(summary) -> str:
+    if not isinstance(summary, str) or not summary.strip():
+        raise ValueError("a details section needs a non-empty summary string")
+    return summary
+
+
 def rich_details(summary: str, body: str, open: bool = False) -> str:
+    """One collapsible section.
+
+    Nesting is allowed: pass another ``rich_details(...)`` (or any HTML
+    containing ``<details>``) as ``body``. Telegram allows up to 16 levels
+    of nested formatting and blocks, so deeper nesting raises ValueError
+    here instead of failing at send time.
+    """
+    if _max_details_depth(body) >= _MAX_DETAILS_DEPTH:
+        raise ValueError(
+            "nested details exceed Telegram's 16-level limit for rich messages"
+        )
     attr = " open" if open else ""
     return f"<details{attr}><summary>{summary}</summary>{body}</details>"
+
+
+def _details_section(section):
+    """Normalise one group/nested section to (summary, body, open, children)."""
+    children = ()
+    if isinstance(section, dict):
+        summary = section.get("summary")
+        body = section.get("body", "")
+        is_open = section.get("open", False)
+        children = section.get("children", ())
+    elif isinstance(section, (list, tuple)):
+        if len(section) not in (2, 3):
+            raise ValueError(
+                "a details section is (summary, body) or (summary, body, open)"
+            )
+        summary, body = section[0], section[1]
+        is_open = section[2] if len(section) == 3 else False
+    else:
+        raise ValueError(
+            "a details section is a (summary, body) tuple or a dict with "
+            "'summary' and 'body'"
+        )
+    summary = _validate_details_summary(summary)
+    if body is None:
+        body = ""
+    if not isinstance(body, str):
+        raise ValueError("a details body must be a string")
+    if children is None:
+        children = ()
+    if not isinstance(children, (list, tuple)):
+        raise ValueError("a details 'children' value must be a list of sections")
+    return summary, body, bool(is_open), children
+
+
+def rich_details_group(sections, *, open_first: bool = False, open_all: bool = False) -> str:
+    """Several sibling collapsible sections in one message.
+
+    ``sections`` is an iterable of ``(summary, body)``, ``(summary, body, open)``
+    or ``{"summary": ..., "body": ..., "open": ...}``. A per-section ``open``
+    wins over ``open_first``/``open_all``; ``open_first`` opens only the
+    first section, ``open_all`` opens every section. Sections open and close
+    independently: Telegram has no accordion mode. Returns "" for no sections.
+    """
+    if open_first and open_all:
+        raise ValueError("open_first and open_all cannot both be True")
+    parts = []
+    for index, section in enumerate(sections or ()):
+        summary, body, is_open, _children = _details_section(section)
+        if not is_open:
+            is_open = open_all or (open_first and index == 0)
+        parts.append(rich_details(summary, body, open=is_open))
+    return "\n".join(parts)
+
+
+def _details_tree(node, depth: int) -> str:
+    """Build one (possibly nested) details section from a node."""
+    if isinstance(node, str):
+        if _max_details_depth(node) + depth - 1 > _MAX_DETAILS_DEPTH:
+            raise ValueError(
+                "nested details exceed Telegram's 16-level limit for rich messages"
+            )
+        return node
+    summary, body, is_open, children = _details_section(node)
+    if depth > _MAX_DETAILS_DEPTH:
+        raise ValueError(
+            "nested details exceed Telegram's 16-level limit for rich messages"
+        )
+    inner = body + "".join(
+        _details_tree(child, depth + 1) for child in (children or ())
+    )
+    return rich_details(summary, inner, open=is_open)
+
+
+def rich_details_nested(summary: str, body: str = "", children=(), open: bool = False) -> str:
+    """One collapsible section containing nested collapsible sections.
+
+    ``children`` are sections in the same shapes ``rich_details_group``
+    accepts, plus dicts with a ``children`` key for deeper nesting and
+    prebuilt ``rich_details(...)`` strings. Example::
+
+        rich_details_nested("Guide", "Start here.", children=[
+            ("Install", "pip install richgram"),
+            {"summary": "Advanced", "body": "", "children": [
+                ("Source", "Clone the repo and read rich_ui.py"),
+            ]},
+        ])
+
+    Nesting deeper than Telegram's 16 levels raises ValueError.
+    """
+    return _details_tree(
+        {"summary": summary, "body": body, "open": open, "children": children},
+        depth=1,
+    )
+
+
+def rich_block_paragraph(text: str):
+    """A typed ``InputRichBlockParagraph`` for use in ``rich_send_blocks``."""
+    if InputRichBlockParagraph is None:
+        raise RuntimeError(
+            "rich_block_paragraph needs a Kurigram build with InputRichBlockParagraph"
+        )
+    return InputRichBlockParagraph(text=text)
+
+
+def rich_block_details(summary: str, blocks, open: bool = False):
+    """A typed ``InputRichBlockDetails`` for use in ``rich_send_blocks``.
+
+    ``blocks`` is a list of ``InputRichBlock`` objects; nest another
+    ``rich_block_details(...)`` inside it for nested collapsibles.
+    """
+    if InputRichBlockDetails is None:
+        raise RuntimeError(
+            "rich_block_details needs a Kurigram build with InputRichBlockDetails"
+        )
+    return InputRichBlockDetails(
+        summary=_validate_details_summary(summary),
+        blocks=list(blocks or ()),
+        is_open=True if open else None,
+    )
+
+
+def rich_block_todo_list(items):
+    """A typed checklist block for use in ``rich_send_blocks``.
+
+    Builds an ``InputRichBlockList`` whose items carry ``has_checkbox`` and
+    ``is_checked`` — the same native checkboxes the HTML and Markdown forms
+    render, as real block objects.
+    """
+    if InputRichBlockList is None or InputRichBlockListItem is None:
+        raise RuntimeError(
+            "rich_block_todo_list needs a Kurigram build with "
+            "InputRichBlockList / InputRichBlockListItem"
+        )
+    if InputRichBlockParagraph is None:
+        raise RuntimeError(
+            "rich_block_todo_list needs a Kurigram build with InputRichBlockParagraph"
+        )
+    return InputRichBlockList(
+        items=[
+            InputRichBlockListItem(
+                blocks=[InputRichBlockParagraph(text=text)],
+                has_checkbox=True,
+                is_checked=done,
+            )
+            for text, done in _todo_items(items)
+        ]
+    )
+
+
+_TODO_LI_RE = re.compile(r"<li\b[^>]*>\s*(<input\b[^>]*>)", re.I)
+
+
+def _todo_li_to_plain(match) -> str:
+    """Render a checklist item as ``[x] `` / ``[ ] ``, or leave it alone.
+
+    Only checkbox inputs are converted; any other input inside an <li> is
+    returned untouched so the plain-list handling still sees the <li>.
+    """
+    tag = match.group(1)
+    if "checkbox" not in tag.lower():
+        return match.group(0)
+    if re.search(r"\bchecked\b", tag, re.I):
+        return "[x] "
+    return "[ ] "
+
+
+_DETAILS_OUTLINE_RE = re.compile(
+    r"<details\b[^>]*>|</details>|<summary>(.*?)</summary>", re.I | re.S
+)
+
+
+def _details_to_outline(html_text: str, bold: bool) -> str:
+    depth = 0
+
+    def _replace(match):
+        nonlocal depth
+        token = match.group(0)
+        lowered = token.lower()
+        if lowered.startswith("</details"):
+            depth = max(0, depth - 1)
+            return "\n"
+        if lowered.startswith("<details"):
+            depth += 1
+            return ""
+        summary = match.group(1) or ""
+        indent = "  " * max(0, depth - 1)
+        if bold:
+            return f"{indent}▸ <b>{summary}</b>\n"
+        return f"{indent}▸ {summary}\n"
+
+    return _DETAILS_OUTLINE_RE.sub(_replace, html_text)
 
 
 def rich_to_plain(html_text: str) -> str:
@@ -256,6 +1013,8 @@ def rich_to_plain(html_text: str) -> str:
         return ""
     text = str(html_text)
     text = _EMOJI_TAG_RE.sub(r"\1", text)
+    text = _details_to_outline(text, bold=False)
+    text = _TODO_LI_RE.sub(_todo_li_to_plain, text)
     text = re.sub(r"<li\b[^>]*>", "\u2022 ", text, flags=re.I)
     text = re.sub(r"<hr\s*/?>", "\n", text, flags=re.I)
     text = _CELL_BREAK_RE.sub("\x1f", text)
@@ -296,6 +1055,7 @@ def _normalize_html(html_text: str) -> str:
             logger.debug(f"[_normalize_html] html hook skipped: {e}")
     text = re.sub(r"href='([^']*)'", r'href="\1"', text)
     text = re.sub(r'href=(?!["\'])([^\s">]+)', r'href="\1"', text)
+    text = _LEGACY_EMOJI_RE.sub(r'<tg-emoji emoji-id="\1">\2</tg-emoji>', text)
     parts = _VERBATIM_BLOCK_RE.split(text)
     for i in range(0, len(parts), 2):
         if not parts[i]:
@@ -329,12 +1089,14 @@ def _plain_fallback(html_text: str) -> str:
     text = re.sub(r"<p\b[^>]*>", "", text, flags=re.I)
     text = re.sub(r"</p>", "\n\n", text, flags=re.I)
     text = re.sub(r"<h[1-6]>(.*?)</h[1-6]>", r"\n<b>\1</b>\n", text, flags=re.I | re.S)
-    text = re.sub(r"<summary>(.*?)</summary>", r"<b>\1</b>\n", text, flags=re.I | re.S)
+    text = _details_to_outline(text, bold=True)
     text = re.sub(r"<mark>(.*?)</mark>", r"<b>\1</b>", text, flags=re.I | re.S)
     text = re.sub(r"<tg-math-block>(.*?)</tg-math-block>", r"<code>\1</code>", text, flags=re.I | re.S)
     text = _BUTTON_RE.sub(_button_to_plain, text)
     text = re.sub(r"<button[^>]*>(.*?)</button>", r"<b>\1</b>", text, flags=re.I | re.S)
+    text = _TODO_LI_RE.sub(_todo_li_to_plain, text)
     text = re.sub(r"<li\b[^>]*>", "\u2022 ", text, flags=re.I)
+    text = re.sub(r"<input\b[^>]*>", "", text, flags=re.I)
     text = re.sub(r"</li>", "\n", text, flags=re.I)
     text = re.sub(r"<hr\s*/?>", "\n\u2500\u2500\u2500\u2500\u2500\n", text, flags=re.I)
     text = re.sub(r"</tg-button-row>", "\n", text, flags=re.I)

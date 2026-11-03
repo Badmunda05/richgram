@@ -7,13 +7,20 @@ from richgram import (
     RICH_AVAILABLE,
     rich_button,
     rich_button_row,
-    rich_details,
+    rich_details_group,
     rich_edit,
+    rich_emoji_named,
     rich_heading,
     rich_kv_table,
     rich_note,
+    rich_page_index,
+    rich_pre_rich,
     rich_reply,
+    rich_todo_list,
+    register_custom_emoji,
 )
+
+register_custom_emoji("fire", "5368324170671202286", "🔥")
 
 STYLES = ("primary", "success", "danger")
 
@@ -25,12 +32,22 @@ def random_style() -> str:
 def home_text() -> str:
     return (
         rich_heading("richgram demo", level=3)
-        + rich_note("Buttons change colour every time you tap Shuffle.")
+        + rich_note("Buttons change colour every time you tap Shuffle. " + rich_emoji_named("fire"))
         + rich_kv_table([
             ("Library", "richgram"),
             ("Rich support", "yes" if RICH_AVAILABLE else "no"),
         ])
-        + rich_details("What is this?", "A test bot for the richgram package.")
+        + rich_todo_list([
+            ("Clone richgram", True),
+            ("Try the demo bot", True),
+            ("Build your own checklist", False),
+        ])
+        + rich_details_group([
+            ("What is this?", "A test bot for the richgram package."),
+            ("Multiple collapsibles", "Two sections, one message — each opens on its own."),
+        ], open_first=True)
+        + rich_pre_rich("<b>pip</b> install <code>richgram</code>", language="bash")
+        + rich_page_index(1, 1, total=3, label="Demo")
     )
 
 
@@ -39,6 +56,7 @@ def home_kb() -> str:
         rich_button_row(
             rich_button("🎨 Shuffle colours", callback_data="shuffle", style=random_style()),
             rich_button("🏓 Ping", callback_data="ping", style=random_style()),
+            rich_button("📋 Copy repo", copy_text="https://github.com/Badmunda05/richgram", style=random_style()),
         )
         + rich_button_row(
             rich_button("🍬 Support", url="https://t.me/BadmundaXd", style=random_style()),

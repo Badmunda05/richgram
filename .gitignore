@@ -4,6 +4,7 @@ __pycache__/
 build/
 dist/
 .pytest_cache/
+.venv/
 *.session
 *.session-journal
 .env
